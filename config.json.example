@@ -1,0 +1,7 @@
+{
+  "box": {
+    "client_id": "YOUR_BOX_CLIENT_ID_HERE",
+    "client_secret": "YOUR_BOX_CLIENT_SECRET_HERE",
+    "target_folder_id": "YOUR_BOX_FOLDER_ID_HERE"
+  }
+}
