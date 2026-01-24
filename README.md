@@ -27,6 +27,8 @@ Enter deployment information, select devices, and configure storage location.
 ### SD Card Data Collection
 Copy files from SD cards with automatic renaming and metadata extraction.
 
+![SD Card Data Collection](screenshots/02-data-collection.png)
+
 ### Review & Finalize
 View deployment summary and upload to Box cloud storage.
 
@@ -104,7 +106,7 @@ python cassn_field_data_manager.py
 ### 3. Workflow
 
 #### Step 1: Deployment Metadata
-- Select your organization (UC, CSU, CDFW, Pepperwood)
+- Select UC as the organization
 - Choose the reserve/site from dropdown (auto-complete enabled)
 - Enter deployment start and end dates
 - Select who is downloading the data
@@ -156,39 +158,18 @@ The `file_metadata.csv` includes:
 - Original and new filenames
 - Plot number and label
 - Device type and label
-- File type (image/audio/video)
+- File type (image/audio)
 - File size and SHA-256 hash
 - Timestamp
-- GPS coordinates (if available)
 - EXIF data (DateTime, Make, Model)
 - Source path
 
-## Supported Organizations & Reserves
+## Device Types
 
-### Organizations
-- UC (University of California)
-- CSU (California State University)
-- CDFW (California Department of Fish and Wildlife)
-- Pepperwood Preserve
-
-### Device Types
 - **ML**: Medium-Large Animal Camera
 - **SA**: Small Animal Camera
 - **BD**: Acoustic Recorder (Birds)
 - **BT**: Acoustic Recorder (Bats)
-
-### Pre-configured Reserves
-
-The application includes 40+ UCNRS reserves with automatic site code mapping:
-- Angelo Coast Range Reserve
-- Año Nuevo Island Reserve
-- Blue Oak Ranch Reserve
-- Bodega Marine Reserve
-- Hastings Natural History Reservation
-- Sedgwick Reserve
-- And many more...
-
-Some reserves have custom plot names (e.g., QuailRidge: PleasureCove, DeckerCanyon, ChaparralRidge, FarPond).
 
 ## Configuration
 
@@ -226,57 +207,7 @@ The application loads site and plot information from CSV files in the `data/` fo
 **data/plots.csv**
 - Contains custom plot names for specific reserves
 - Format: `site_code,plot_number,plot_name`
-- Reserves with named plots:
-  - Angelo: Wilderness Lodge Meadow, South Fork Eel River, Oak Woodland, Elder Creek
-  - Bodega: Native Dunes, Lab Pond, Coastal Prairie, Gaffney Point
-  - Jepson: BarkerSlough-OtterBridge, OlcottLake, RoundPond, CalhounCut
-  - QuailRidge: Far Pond, ChaparralRidge, Pleasure Cove, Decker Canyon
-  - Sedgwick: Waterfall, Bone Canyon, Windmill, Vernal Pool
 - **Edit this file to customize plot names** - changes take effect on next app launch
-- Leave `plot_name` empty for plots without custom names
-
-## Troubleshooting
-
-### Box Upload Fails
-
-**Problem**: Upload to Box fails with authentication error
-
-**Solution**:
-1. Delete `box_tokens.json`
-2. Re-run `python box_auth_setup.py`
-3. Restart the application
-
-### EXIF Data Not Extracted
-
-**Problem**: No GPS coordinates or camera info in metadata
-
-**Solution**:
-1. Ensure PIL and piexif are installed: `pip install pillow piexif`
-2. Check that images contain EXIF data (some cameras don't embed GPS)
-3. RAW formats may require camera-specific libraries
-
-### Files Not Copying
-
-**Problem**: SD card files not copying or "Permission denied" error
-
-**Solution**:
-- Ensure SD card is mounted and accessible
-- Check file permissions on SD card
-- Try copying a few files manually to verify SD card is readable
-- On macOS, grant Terminal/Python "Full Disk Access" in System Preferences > Privacy
-
-### Application Won't Start
-
-**Problem**: Error on launch or missing dependencies
-
-**Solution**:
-```bash
-# Reinstall all dependencies
-pip install --upgrade PySide6 pillow piexif box-sdk-gen
-
-# Check Python version (must be 3.8+)
-python --version
-```
 
 ## Development
 
@@ -286,9 +217,10 @@ python --version
 cassn-field-data-manager/
 ├── cassn_field_data_manager.py       # Main application
 ├── box_auth_setup.py                 # Box OAuth authentication
+├── config.json.example               # Configuration template
 ├── assets/                           # Visual assets (logos for app UI)
 │   ├── ucnrs_logo.png                # UCNRS logo (optional)
-│   └── cassn_icon.png                # CA-SSN logo (optional)
+│   └── cassn_icon.png                # CA-SSN logo
 ├── data/                             # Lookup tables and reference data
 │   ├── sites.csv                     # Site/reserve lookup table
 │   └── plots.csv                     # Plot names lookup table
@@ -296,99 +228,3 @@ cassn-field-data-manager/
 ├── .gitignore                        # Git ignore file
 └── README.md                         # This file
 ```
-
-### Version History
-
-**Version 2.1** (Current)
-- OAuth automatic token refresh
-- Dual logo branding (CA-SSN + UCNRS)
-- Box upload progress tracking
-- Improved UI organization
-- Cloud backup with automatic token management
-
-**Version 2.0**
-- Initial PySide6 implementation
-- Local staging and metadata generation
-- EXIF extraction
-- Multi-plot, multi-device workflow
-
-### Adding New Reserves
-
-To add a new reserve, edit `data/sites.csv`:
-
-```csv
-New Reserve Name,NewCode,NRC
-```
-
-Format: `site_name,site_code,label_code`
-
-To add custom plot names for a reserve, edit `data/plots.csv`:
-
-```csv
-NewCode,1,North Plot
-NewCode,2,South Plot
-NewCode,3,East Plot
-NewCode,4,West Plot
-```
-
-Format: `site_code,plot_number,plot_name`
-
-Leave the `plot_name` field empty for plots without custom names. Restart the application to see changes.
-
-## Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Areas for Contribution
-
-- Additional cloud storage providers (Google Drive, AWS S3, Azure)
-- Wildlife Insights direct upload integration
-- Database backend for metadata storage
-- Bulk deployment management
-- Audio file metadata extraction
-- Video thumbnail generation
-- Progress bars for large file copies
-- Unit tests and CI/CD
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Authors
-
-- **John Imperato** - Initial development
-- CA-SSN Field Team - Requirements and testing
-
-## Acknowledgments
-
-- University of California Natural Reserve System (UCNRS)
-- California Department of Fish and Wildlife (CDFW)
-- California Statewide Surveillance Network (CA-SSN)
-- Wildlife Insights for metadata standards inspiration
-
-## Support
-
-For questions or issues:
-- Open an issue on GitHub
-- Contact the CA-SSN data management team
-- Email: [your-email@example.com]
-
-## Citation
-
-If you use this software in your research, please cite:
-
-```
-Imperato, J. (2025). CA-SSN Field Data Manager: A tool for wildlife monitoring
-data collection and management. GitHub repository.
-https://github.com/yourusername/cassn-field-data-manager
-```
-
----
-
-**Note**: This application was developed for the California Statewide Surveillance Network to streamline field data collection workflows across California's natural reserves. It is designed to work with standardized monitoring protocols for camera traps and acoustic recorders.

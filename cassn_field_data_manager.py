@@ -44,7 +44,7 @@ except ImportError:
 # EXIF handling
 try:
     from PIL import Image
-    from PIL.ExifTags import TAGS, GPSTAGS
+    from PIL.ExifTags import TAGS
     import piexif
     EXIF_AVAILABLE = True
 except ImportError:
@@ -151,18 +151,15 @@ DOWNLOADERS = [
 # File type classification
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.gif', '.cr2', '.nef', '.arw', '.dng'}
 AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.m4a', '.aac', '.wma', '.ogg'}
-VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm'}
 
 
 def classify_file(filename):
-    """Classify file as image, audio, video, or other"""
+    """Classify file as image or audio"""
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
         return "image"
     elif ext in AUDIO_EXTENSIONS:
         return "audio"
-    elif ext in VIDEO_EXTENSIONS:
-        return "video"
     else:
         return "other"
 
@@ -182,40 +179,11 @@ def extract_exif_data(image_path):
                 tag = TAGS.get(tag_id, tag_id)
                 exif_data[tag] = value
         
-        if 'GPSInfo' in exif_data:
-            gps_info = exif_data['GPSInfo']
-            gps_data = {}
-            for key in gps_info.keys():
-                decode = GPSTAGS.get(key, key)
-                gps_data[decode] = gps_info[key]
-            exif_data['GPSInfo'] = gps_data
-            
         return exif_data
     except Exception as e:
         return {"error": str(e)}
 
 
-def convert_gps_to_decimal(gps_info):
-    """Convert GPS coordinates from EXIF format to decimal degrees"""
-    try:
-        lat = gps_info.get('GPSLatitude')
-        lat_ref = gps_info.get('GPSLatitudeRef')
-        lon = gps_info.get('GPSLongitude')
-        lon_ref = gps_info.get('GPSLongitudeRef')
-        
-        if lat and lon:
-            lat_decimal = lat[0] + lat[1]/60 + lat[2]/3600
-            if lat_ref == 'S':
-                lat_decimal = -lat_decimal
-                
-            lon_decimal = lon[0] + lon[1]/60 + lon[2]/3600
-            if lon_ref == 'W':
-                lon_decimal = -lon_decimal
-                
-            return lat_decimal, lon_decimal
-    except:
-        pass
-    return None, None
 
 
 def compute_file_hash(filepath):
@@ -1031,11 +999,8 @@ class FieldDataWizard(QMainWindow):
                 
                 # Extract EXIF
                 exif_data = {}
-                lat, lon = None, None
                 if classify_file(filename) == "image" and EXIF_AVAILABLE:
                     exif_data = extract_exif_data(dest_path)
-                    if 'GPSInfo' in exif_data:
-                        lat, lon = convert_gps_to_decimal(exif_data['GPSInfo'])
                 
                 # Compute hash
                 file_hash = compute_file_hash(dest_path)
@@ -1053,8 +1018,6 @@ class FieldDataWizard(QMainWindow):
                     'file_hash_sha256': file_hash,
                     'source_path': str(source_path),
                     'timestamp': datetime.fromtimestamp(dest_path.stat().st_mtime).isoformat(),
-                    'latitude': lat,
-                    'longitude': lon,
                     'exif_datetime': exif_data.get('DateTime'),
                     'exif_make': exif_data.get('Make'),
                     'exif_model': exif_data.get('Model'),
