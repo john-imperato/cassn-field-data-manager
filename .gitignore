@@ -39,7 +39,8 @@ ENV/
 .LSOverride
 ._*
 
-# Box authentication tokens (IMPORTANT: Never commit these!)
+# Box configuration and tokens (IMPORTANT: Never commit these!)
+config.json
 box_tokens.json
 
 # User configuration

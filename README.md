@@ -48,15 +48,41 @@ pip install PySide6 pillow piexif box-sdk-gen
 Clone this repository or download the latest release:
 
 ```bash
-git clone https://github.com/yourusername/cassn-field-data-manager.git
+git clone https://github.com/john-imperato/cassn-field-data-manager.git
 cd cassn-field-data-manager
 ```
+
+### Configure Box Credentials
+
+Create your configuration file from the template:
+
+```bash
+cp config.json.example config.json
+```
+
+Edit `config.json` and add your Box application credentials:
+
+```json
+{
+  "box": {
+    "client_id": "YOUR_BOX_CLIENT_ID",
+    "client_secret": "YOUR_BOX_CLIENT_SECRET",
+    "target_folder_id": "YOUR_BOX_FOLDER_ID"
+  }
+}
+```
+
+**To get Box credentials:**
+1. Go to https://app.box.com/developers/console
+2. Create a new app (Custom App → OAuth 2.0)
+3. Copy the Client ID and Client Secret
+4. Find your target folder ID from the Box web interface URL
 
 ## Usage
 
 ### 1. Box Authentication (First Time Setup)
 
-Before using cloud upload features, authenticate with Box:
+After configuring `config.json`, authenticate with Box:
 
 ```bash
 python box_auth_setup.py
@@ -178,12 +204,13 @@ Check "Set as default" in the metadata tab to save your staging location prefere
 
 ### Box Configuration
 
-Box credentials and folder IDs are configured in the application:
-- Client ID and Secret are embedded
-- Target folder ID: `345921464728`
-- Tokens are stored in: `box_tokens.json`
+Box credentials and folder IDs are configured in `config.json`:
+- `client_id`: Your Box application Client ID
+- `client_secret`: Your Box application Client Secret
+- `target_folder_id`: The Box folder ID where data will be uploaded
+- Tokens are automatically stored in: `box_tokens.json`
 
-To change the Box upload destination, edit `BOX_TARGET_FOLDER_ID` in `cassn_field_data_manager.py`.
+**Important:** Never commit `config.json` to version control. It contains sensitive credentials.
 
 ### Lookup Tables
 
