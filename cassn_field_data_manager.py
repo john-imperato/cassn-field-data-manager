@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+"""
+CA-SSN Field Data Wizard - Core Version with Box Integration (PySide6)
+Local staging and Box cloud storage for wildlife monitoring data
+
+New Features:
+- Automatic upload to Box after file processing
+- Progress tracking for uploads
+- Organized folder structure in Box
+- Option to skip Box upload if offline
+
+Usage:
+  pip install PySide6 pillow piexif box-sdk-gen
+  python field_data_wizard_box.py
+"""
 
 import sys
 import csv
@@ -65,58 +79,60 @@ except FileNotFoundError as e:
     print(f"Warning: {e}")
     BOX_CLIENT_ID = BOX_CLIENT_SECRET = BOX_TARGET_FOLDER_ID = None
 
+# Load reserves from CSV
+def load_reserves_from_csv():
+    """Load reserves from data/sites.csv"""
+    reserves = []
+    csv_path = Path(__file__).parent / "data" / "sites.csv"
+
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                site_code = row['site_code'].strip()
+                site_name = row['site_name'].strip()
+                if site_code and site_name:
+                    reserves.append((site_code, site_name))
+    except Exception as e:
+        print(f"Warning: Could not load sites.csv: {e}")
+        # Fallback to minimal list
+        reserves = [
+            ("Bodega", "Bodega Marine Reserve"),
+            ("QuailRidge", "Quail Ridge Reserve"),
+        ]
+
+    return reserves
+
+
+def load_plot_names_from_csv():
+    """Load plot names from data/plots.csv"""
+    plot_names = {}
+    csv_path = Path(__file__).parent / "data" / "plots.csv"
+
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                site_code = row['site_code'].strip()
+                plot_number = int(row['plot_number'])
+                plot_name = row['plot_name'].strip()
+
+                if site_code not in plot_names:
+                    plot_names[site_code] = [None, None, None, None]
+
+                if 1 <= plot_number <= 4 and plot_name:
+                    plot_names[site_code][plot_number - 1] = plot_name
+    except Exception as e:
+        print(f"Warning: Could not load plots.csv: {e}")
+        plot_names = {}
+
+    return plot_names
+
+
 # Organization and reserve lists
-ORGANIZATIONS = ["UC", "CSU", "CDFW", "Pepperwood Preserve"]
-
-RESERVES = [
-    ("Angelo", "Angelo Coast Range Reserve"),
-    ("AñoNuevo", "Año Nuevo Island Reserve"),
-    ("BlueOakRanch", "Blue Oak Ranch Reserve"),
-    ("Bodega", "Bodega Marine Reserve"),
-    ("BoxSprings", "Box Springs Reserve"),
-    ("Cahill", "Cahill Riparian Reserve"),
-    ("DeepCanyon", "Boyd Deep Canyon Desert Research Center"),
-    ("PiñonRidge", "Burns Piñon Ridge Reserve"),
-    ("CarpSaltMarsh", "Carpinteria Salt Marsh Reserve"),
-    ("CoalOilPoint", "Coal Oil Point Natural Reserve"),
-    ("LosMonosCanyon", "Dawson Los Monos Canyon Reserve"),
-    ("ElliotChaparral", "Elliott Chaparral Reserve"),
-    ("EmersonOaks", "Emerson Oaks Reserve"),
-    ("FortOrd", "Fort Ord Natural Reserve"),
-    ("Hastings", "Hastings Natural History Reservation"),
-    ("SanJacintoMtns", "James San Jacinto Mountains Reserve"),
-    ("JepsonPrairie", "Jepson Prairie Reserve"),
-    ("MissionBayMarsh", "Kendall-Frost Mission Bay Marsh Reserve"),
-    ("RanchoMarino", "Kenneth S. Norris Rancho Marino Reserve"),
-    ("BigCreek", "Landels-Hill Big Creek Reserve"),
-    ("Lassen", "Lassen Field Station"),
-    ("McLaughlin", "McLaughlin Natural Reserve"),
-    ("MercedVernal", "Merced Vernal Pools and Grassland Reserve"),
-    ("MotteRimrock", "Motte Rimrock Reserve"),
-    ("PointReyes", "Point Reyes Field Station"),
-    ("QuailRidge", "Quail Ridge Reserve"),
-    ("Sagehen", "Sagehen Creek Field Station"),
-    ("SanJoaquinMarsh", "San Joaquin Marsh Reserve"),
-    ("SantaCruzIsland", "Santa Cruz Island Reserve"),
-    ("Scripps", "Scripps Coastal Reserve"),
-    ("Sedgwick", "Sedgwick Reserve"),
-    ("SNARL", "Sierra Nevada Aquatic Research Laboratory"),
-    ("AnzaBorrego", "Steele/Burnand Anza-Borrego Desert Research Center"),
-    ("StrathearnRanch", "Strathearn Ranch Natural Reserve"),
-    ("StuntRanch", "Stunt Ranch Santa Monica Mountains Reserve"),
-    ("GraniteMtns", "Sweeney Granite Mountains Desert Research Center"),
-    ("ValentineCamp", "Valentine Eastern Sierra Reserve"),
-    ("WhiteMtn", "White Mountain Research Center"),
-    ("YoungerLagoon", "Younger Lagoon Reserve"),
-    ("Yosemite", "Yosemite Field Station"),
-]
-
-# Plot names for each reserve (keyed by reserve code)
-PLOT_NAMES = {
-    "QuailRidge": ["PleasureCove", "DeckerCanyon", "ChaparralRidge", "FarPond"],
-    "Jepson": ["BarkerSlough-OtterBridge", "OlcottLake", "RoundPond", "CalhounCut"],
-    "Bodega": ["LabPond", "CoastalPrairie", "GaffneyPoint", "NativeDunes"],
-}
+ORGANIZATIONS = ["UC"]
+RESERVES = load_reserves_from_csv()
+PLOT_NAMES = load_plot_names_from_csv()
 
 # Device type definitions
 DEVICE_TYPES = {
@@ -168,8 +184,6 @@ def extract_exif_data(image_path):
         return exif_data
     except Exception as e:
         return {"error": str(e)}
-
-
 
 
 def compute_file_hash(filepath):
@@ -394,7 +408,7 @@ class FieldDataWizard(QMainWindow):
     def init_ui(self):
         """Initialize the user interface"""
         # Set window icon
-        icon_path = Path(__file__).parent / "ucnrs_logo.png"
+        icon_path = Path(__file__).parent / "assets" / "cassn_icon.png"
         if icon_path.exists():
             from PySide6.QtGui import QIcon
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -404,33 +418,30 @@ class FieldDataWizard(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
-        # Logo banner at top - dual logos
+        # Logo banner at top - logo + title
         banner_layout = QHBoxLayout()
+        banner_layout.setContentsMargins(0, 0, 0, 0)
         banner_layout.addStretch()
-        
+
         # CA-SSN Logo
-        cassn_logo_path = Path(__file__).parent / "cassn_icon.png"
+        cassn_logo_path = Path(__file__).parent / "assets" / "cassn_icon.png"
         if cassn_logo_path.exists():
             cassn_label = QLabel()
             cassn_pixmap = QPixmap(str(cassn_logo_path))
-            cassn_scaled = cassn_pixmap.scaledToHeight(80, Qt.SmoothTransformation)
+            cassn_scaled = cassn_pixmap.scaledToHeight(140, Qt.SmoothTransformation)
             cassn_label.setPixmap(cassn_scaled)
             cassn_label.setAlignment(Qt.AlignCenter)
             banner_layout.addWidget(cassn_label)
-        
-        # Spacing between logos
-        banner_layout.addSpacing(30)
-        
-        # UCNRS Logo
-        ucnrs_logo_path = Path(__file__).parent / "ucnrs_logo.png"
-        if ucnrs_logo_path.exists():
-            ucnrs_label = QLabel()
-            ucnrs_pixmap = QPixmap(str(ucnrs_logo_path))
-            ucnrs_scaled = ucnrs_pixmap.scaledToHeight(80, Qt.SmoothTransformation)
-            ucnrs_label.setPixmap(ucnrs_scaled)
-            ucnrs_label.setAlignment(Qt.AlignCenter)
-            banner_layout.addWidget(ucnrs_label)
-        
+
+        banner_layout.addSpacing(10)
+
+        # App title
+        title_label = QLabel("CA-SSN Field Data Manager")
+        title_font = QFont("Arial", 24, QFont.Bold)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignCenter)
+        banner_layout.addWidget(title_label)
+
         banner_layout.addStretch()
         main_layout.addLayout(banner_layout)
         main_layout.addSpacing(10)
