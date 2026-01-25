@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-CA-SSN Field Data Wizard - Core Version with Box Integration (PySide6)
-Local staging and Box cloud storage for wildlife monitoring data
-
-New Features:
-- Automatic upload to Box after file processing
-- Progress tracking for uploads
-- Organized folder structure in Box
-- Option to skip Box upload if offline
-
-Usage:
-  pip install PySide6 pillow piexif box-sdk-gen
-  python field_data_wizard_box.py
-"""
 
 import sys
 import csv
