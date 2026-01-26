@@ -869,9 +869,10 @@ class FieldDataWizard(QMainWindow):
         self.tabs.setCurrentIndex(1)
     
     def create_deployment_folder(self):
-        """Create deployment folder in staging location"""
-        folder_name = f"{self.metadata['organization']}_{self.metadata['site']}_{self.metadata['deployment_start'].replace('-', '')}"
-        
+        """Create deployment folder in staging location based on retrieval date"""
+        retrieval_date = datetime.now().strftime("%Y%m%d")
+        folder_name = f"{self.metadata['organization']}_{self.metadata['site']}_{retrieval_date}"
+
         self.current_deployment_folder = self.staging_root / folder_name
         self.current_deployment_folder.mkdir(parents=True, exist_ok=True)
         
