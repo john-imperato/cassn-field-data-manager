@@ -3,14 +3,14 @@ Angelo,1,Wilderness Lodge Meadow
 Angelo,2,South Fork Eel River
 Angelo,3,Oak Woodland
 Angelo,4,Elder Creek
-A–oNuevo,1,
-A–oNuevo,2,
-A–oNuevo,3,
-A–oNuevo,4,
-BlueOakRanch,1,
-BlueOakRanch,2,
-BlueOakRanch,3,
-BlueOakRanch,4,
+AnoNuevo,1,GORP
+AnoNuevo,2,Coastal Scrub Seasonal Riparian
+AnoNuevo,3,Bickford Pond
+AnoNuevo,4,Dune 
+BlueOakRanch,1,Blue Bottle Spring
+BlueOakRanch,2,Aguague
+BlueOakRanch,3,Cabin Pond
+BlueOakRanch,4,Dogleg
 Bodega,1,Native Dunes
 Bodega,2,Lab Pond
 Bodega,3,Coastal Prairie
@@ -27,18 +27,18 @@ DeepCanyon,1,
 DeepCanyon,2,
 DeepCanyon,3,
 DeepCanyon,4,
-Pi–onRidge,1,
-Pi–onRidge,2,
-Pi–onRidge,3,
-Pi–onRidge,4,
+PinonRidge,1,
+PinonRidge,2,
+PinonRidge,3,
+PinonRidge,4,
 CarpSaltMarsh,1,
 CarpSaltMarsh,2,
 CarpSaltMarsh,3,
 CarpSaltMarsh,4,
-CoalOilPoint,1,
-CoalOilPoint,2,
-CoalOilPoint,3,
-CoalOilPoint,4,
+CoalOilPoint,1,Oak Woodland
+CoalOilPoint,2,Vernal Pool Grassland
+CoalOilPoint,3,Dune Scrub
+CoalOilPoint,4,Back Dunes
 LosMonosCanyon,1,
 LosMonosCanyon,2,
 LosMonosCanyon,3,
@@ -51,10 +51,10 @@ EmersonOaks,1,
 EmersonOaks,2,
 EmersonOaks,3,
 EmersonOaks,4,
-FortOrd,1,
-FortOrd,2,
-FortOrd,3,
-FortOrd,4,
+FortOrd,1,1
+FortOrd,2,2
+FortOrd,3,3
+FortOrd,4,4
 Hastings,1,
 Hastings,2,
 Hastings,3,
@@ -83,10 +83,10 @@ Lassen,1,
 Lassen,2,
 Lassen,3,
 Lassen,4,
-McLaughlin,1,
-McLaughlin,2,
-McLaughlin,3,
-McLaughlin,4,
+McLaughlin,1,Mountain Lion Pond
+McLaughlin,2,Felch
+McLaughlin,3,Quarry Valley
+McLaughlin,4,Aikawa
 MercedVernal,1,
 MercedVernal,2,
 MercedVernal,3,
