@@ -29,8 +29,10 @@ Copy files from SD cards with automatic renaming and metadata extraction.
 
 ![SD Card Data Collection](screenshots/02-data-collection.png)
 
-### Review & Finalize
+### Review & Upload to Box
 View deployment summary and upload to Box cloud storage.
+
+![Review & Upload](screenshots/03-review-upload.png)
 
 ## Installation
 

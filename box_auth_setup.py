@@ -124,7 +124,7 @@ if not existing_tokens:
         print(f"Connected to Box as: {user.name} ({user.login})")
         print(f"{'=' * 70}")
         print(f"\n✓ You're all set! Your tokens are saved in {TOKEN_FILE}")
-        print("✓ You can now use Box in your Field Data Wizard\n")
+        print("✓ You can now use Box in your Field Data Manager\n")
         
     except Exception as e:
         print(f"\n✗ Error: {e}")
