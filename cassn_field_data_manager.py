@@ -139,15 +139,18 @@ DOWNLOADERS = [
 # File type classification
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.gif', '.cr2', '.nef', '.arw', '.dng'}
 AUDIO_EXTENSIONS = {'.wav', '.mp3', '.flac', '.m4a', '.aac', '.wma', '.ogg'}
+CONFIG_EXTENSIONS = {'.txt'}
 
 
 def classify_file(filename):
-    """Classify file as image or audio"""
+    """Classify file as image, audio, config, or other."""
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
         return "image"
     elif ext in AUDIO_EXTENSIONS:
         return "audio"
+    elif ext in CONFIG_EXTENSIONS:
+        return "config"
     else:
         return "other"
 
@@ -943,52 +946,59 @@ class FieldDataWizard(QMainWindow):
             selected.setText(2, "Complete")
             selected.setText(3, str(files_copied))
             
-            self.log(f"✓ Completed! {files_copied} files copied and renamed.\n")
+            self.log(f"✓ Completed! {files_copied} files copied.\n")
             
         except Exception as e:
             self.log(f"✗ Error: {str(e)}\n")
             QMessageBox.critical(self, "Copy Error", f"Error copying files: {str(e)}")
     
     def process_sd_card_files(self, source_dir, dest_dir, plot_num, plot_label, dev_code, device_label):
-        """Process files from SD card"""
+        """Process files from SD card."""
         files_copied = 0
         file_sequence = 1
-        
-        # Get deployment end date for filename
+
+        # Deployment end date for media filenames (YYYYMM)
         deploy_date = datetime.strptime(self.metadata['deployment_end'], "%Y-%m-%d")
         date_str = deploy_date.strftime("%Y%m")
-        
+
+        # Deployment start date for config filenames (YYYYMMDD)
+        deploy_start = datetime.strptime(self.metadata['deployment_start'], "%Y-%m-%d")
+        start_date_str = deploy_start.strftime("%Y%m%d")
+
         org = self.metadata['organization']
         site = self.metadata['site']
-        
+
         for root, dirs, files in os.walk(source_dir):
             for filename in files:
                 if filename.startswith('.') or filename.startswith('_'):
                     continue
-                
+
                 source_path = Path(root) / filename
                 file_ext = source_path.suffix.lower()
-                
-                if classify_file(filename) == "other":
+                file_type = classify_file(filename)
+
+                if file_type == "other":
                     continue
-                
-                # Generate new filename
-                seq_str = f"{file_sequence:05d}"
-                new_filename = f"{org}_{site}_plot{plot_num}_{dev_code}_{date_str}_{seq_str}{file_ext}"
-                dest_path = dest_dir / new_filename
-                
-                # Copy file
+
+                if file_type == "config":
+                    # Rename: ORG_SITE_DEVCODE_YYYYMMDD_CONFIG_01.txt
+                    new_filename = f"{org}_{site}_{dev_code}_{start_date_str}_CONFIG_01{file_ext}"
+                    dest_path = dest_dir / new_filename
+                else:
+                    # Media files: standard rename convention
+                    seq_str = f"{file_sequence:05d}"
+                    new_filename = f"{org}_{site}_plot{plot_num}_{dev_code}_{date_str}_{seq_str}{file_ext}"
+                    dest_path = dest_dir / new_filename
+                    file_sequence += 1
+
                 shutil.copy2(source_path, dest_path)
-                
-                # Extract EXIF
+
                 exif_data = {}
-                if classify_file(filename) == "image" and EXIF_AVAILABLE:
+                if file_type == "image" and EXIF_AVAILABLE:
                     exif_data = extract_exif_data(dest_path)
-                
-                # Compute hash
+
                 file_hash = compute_file_hash(dest_path)
-                
-                # Record file info
+
                 file_info = {
                     'original_filename': filename,
                     'new_filename': new_filename,
@@ -996,7 +1006,7 @@ class FieldDataWizard(QMainWindow):
                     'plot_label': plot_label,
                     'device_type': dev_code,
                     'device_label': device_label,
-                    'file_type': classify_file(filename),
+                    'file_type': file_type,
                     'file_size_bytes': dest_path.stat().st_size,
                     'file_hash_sha256': file_hash,
                     'source_path': str(source_path),
@@ -1005,15 +1015,13 @@ class FieldDataWizard(QMainWindow):
                     'exif_make': exif_data.get('Make'),
                     'exif_model': exif_data.get('Model'),
                 }
-                
+
                 self.file_inventory.append(file_info)
-                
                 files_copied += 1
-                file_sequence += 1
-                
+
                 if files_copied % 50 == 0:
                     self.log(f"  ...{files_copied} files processed")
-        
+
         return files_copied
     
     def skip_device(self):
