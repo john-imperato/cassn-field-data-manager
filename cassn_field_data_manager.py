@@ -9,6 +9,16 @@ import shutil
 import json
 import hashlib
 
+# Credentials always live in ~/.cassn_credentials/ regardless of how the app is launched.
+# When frozen (bundled .app): assets live in sys._MEIPASS.
+# When running as a script: assets live next to the script.
+_CONFIG_DIR = Path.home() / ".cassn_credentials"
+_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+if getattr(sys, 'frozen', False):
+    _BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    _BUNDLE_DIR = Path(__file__).parent
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QLabel, QLineEdit, QComboBox, QDateEdit, QCheckBox,
@@ -43,7 +53,7 @@ VERSION = "2.1"
 # Load Box credentials from config.json
 def load_box_config():
     """Load Box configuration from config.json"""
-    config_path = Path(__file__).parent / "config.json"
+    config_path = _CONFIG_DIR / "config.json"
     if not config_path.exists():
         raise FileNotFoundError(
             f"Config file not found: {config_path}\n"
@@ -69,7 +79,7 @@ except FileNotFoundError as e:
 def load_reserves_from_csv():
     """Load reserves from data/sites.csv"""
     reserves = []
-    csv_path = Path(__file__).parent / "data" / "sites.csv"
+    csv_path = _BUNDLE_DIR / "data" / "sites.csv"
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -93,7 +103,7 @@ def load_reserves_from_csv():
 def load_plot_names_from_csv():
     """Load plot names from data/plots.csv"""
     plot_names = {}
-    csv_path = Path(__file__).parent / "data" / "plots.csv"
+    csv_path = _BUNDLE_DIR / "data" / "plots.csv"
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -186,8 +196,8 @@ def compute_file_hash(filepath):
 
 def get_box_client():
     """Get authenticated Box client with automatic token refresh"""
-    token_file = Path(__file__).parent / "box_tokens.json"
-    
+    token_file = _CONFIG_DIR / "box_tokens.json"
+
     if not token_file.exists():
         return None
     
@@ -345,7 +355,7 @@ class FieldDataWizard(QMainWindow):
         self.upload_thread = None
         
         # Load saved config
-        self.config_file = Path.home() / ".cassn_wizard" / "config.json"
+        self.config_file = Path.home() / ".cassn_credentials" / "config.json"
         self.load_config()
         
         # Check Box authentication
@@ -359,8 +369,8 @@ class FieldDataWizard(QMainWindow):
         if not BOX_AVAILABLE:
             return False
         
-        # Look for tokens in same folder as script
-        token_file = Path(__file__).parent / "box_tokens.json"
+        # Look for tokens next to .app (or script folder when not bundled)
+        token_file = _CONFIG_DIR / "box_tokens.json"
         if not token_file.exists():
             return False
         
@@ -397,7 +407,7 @@ class FieldDataWizard(QMainWindow):
     def init_ui(self):
         """Initialize the user interface"""
         # Set window icon
-        icon_path = Path(__file__).parent / "assets" / "cassn_icon.png"
+        icon_path = _BUNDLE_DIR / "assets" / "cassn_icon.png"
         if icon_path.exists():
             from PySide6.QtGui import QIcon
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -413,7 +423,7 @@ class FieldDataWizard(QMainWindow):
         banner_layout.addStretch()
 
         # CA-SSN Logo
-        cassn_logo_path = Path(__file__).parent / "assets" / "cassn_icon.png"
+        cassn_logo_path = _BUNDLE_DIR / "assets" / "cassn_icon.png"
         if cassn_logo_path.exists():
             cassn_label = QLabel()
             cassn_pixmap = QPixmap(str(cassn_logo_path))
