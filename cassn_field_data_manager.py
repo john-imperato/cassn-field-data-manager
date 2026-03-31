@@ -274,14 +274,25 @@ class BoxUploadThread(QThread):
                 self.finished.emit(False, "Could not authenticate with Box")
                 return
             
-            # Upload directly to specified Box folder
+            # Validate reserve name against canonical list before building path
+            valid_names = {name for _, name in RESERVES}
+            reserve_name = self.metadata.get('reserve_name', '')
+            if reserve_name not in valid_names:
+                self.finished.emit(
+                    False,
+                    f"Reserve name '{reserve_name}' not found in sites.csv. "
+                    "Cannot determine Box folder path."
+                )
+                return
+
+            # Build nested path: root → year → reserve → deployment
             TARGET_FOLDER_ID = BOX_TARGET_FOLDER_ID
-            
-            # Deployment folder name
+            year = self.metadata['deployment_end'][:4]
             deploy_name = self.deployment_folder.name
-            deploy_folder = self.find_or_create_folder(
-                self.client, TARGET_FOLDER_ID, deploy_name
-            )
+
+            year_folder   = self.find_or_create_folder(self.client, TARGET_FOLDER_ID, year)
+            site_folder   = self.find_or_create_folder(self.client, year_folder.id, reserve_name)
+            deploy_folder = self.find_or_create_folder(self.client, site_folder.id, deploy_name)
             
             # Count total files
             total_files = sum(1 for _ in self.deployment_folder.rglob('*') if _.is_file())
