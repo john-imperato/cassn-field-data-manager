@@ -106,7 +106,7 @@ Pillow is required. The script fails immediately if EXIF support is unavailable.
    ```bash
    ls ~/.cassn_credentials/config.json ~/.cassn_credentials/box_tokens.json
    ```
-2. Open [`utils/recover_file_metadata.py`](/tmp/cassn-rewrite-main/utils/recover_file_metadata.py) and confirm the hard-coded recovery root matches your machine:
+2. Open [`utils/recover_file_metadata.py`](/Users/johnimperato/GitHub/cassn-field-data-manager/utils/recover_file_metadata.py) and confirm the hard-coded recovery root matches your machine:
    - `RECOVERY_ROOT = Path("/Volumes/G-DRIVE ArmorATD/cassn-field-data-staging")`
    - Change this path if you want recovered deployments written somewhere else
    ```bash
@@ -119,13 +119,17 @@ Pillow is required. The script fails immediately if EXIF support is unavailable.
 4. Find the Box deployment folder ID from the Box URL:
    - `https://app.box.com/folder/123456789012`
    - Use the top-level deployment folder ID, not the `raw_data` subfolder ID
+5. Confirm local plot metadata exists for label recovery:
+   ```bash
+   ls local_data/plots.csv
+   ```
 
 ### Run
 ```bash
 python3 utils/recover_file_metadata.py BOX_FOLDER_ID
 ```
 
-Replace `BOX_FOLDER_ID` with the numeric deployment folder ID from Box. Do not include angle brackets.
+Replace `BOX_FOLDER_ID` with the numeric deployment folder ID from Box. 
 
 The script recovers exactly one deployment folder per run.
 
@@ -162,3 +166,4 @@ If the deployment folder already exists locally, the script fails and does not o
 - Writes recovered outputs locally only; it does not upload `file_metadata.csv`
   or `manifest.json` back to Box
 - Writes `recovery_report.json` even when the run completes with failures
+- Uses `local_data/plots.csv` for plot-label lookup; `example_data/` files are templates only

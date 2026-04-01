@@ -1,0 +1,5 @@
+site_code,plot_number,plot_name,plot_latitude,plot_longitude,plot_description
+Site1,1,Meadow,X.xxx,Y.yyy,"optional plot description. Habitat characteristics, notable features, etc. "
+Site1,2,Creek,X.xxx,Y.yyy,
+Site1,3,Forest,X.xxx,Y.yyy,
+Site1,4,Dune,X.xxx,Y.yyy,

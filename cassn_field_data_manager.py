@@ -18,6 +18,7 @@ if getattr(sys, 'frozen', False):
     _BUNDLE_DIR = Path(sys._MEIPASS)
 else:
     _BUNDLE_DIR = Path(__file__).parent
+_LOCAL_DATA_DIR = Path(__file__).parent / "local_data"
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -75,11 +76,15 @@ except FileNotFoundError as e:
     print(f"Warning: {e}")
     BOX_CLIENT_ID = BOX_CLIENT_SECRET = BOX_TARGET_FOLDER_ID = None
 
-# Load reserves from CSV
+def _required_local_csv_path(filename):
+    """Return the required repo-local CSV path."""
+    return _LOCAL_DATA_DIR / filename
+
+
 def load_reserves_from_csv():
-    """Load reserves from data/sites.csv"""
+    """Load reserves from local_data/sites.csv."""
     reserves = []
-    csv_path = _BUNDLE_DIR / "data" / "sites.csv"
+    csv_path = _required_local_csv_path("sites.csv")
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -89,21 +94,22 @@ def load_reserves_from_csv():
                 site_name = row['site_name'].strip()
                 if site_code and site_name:
                     reserves.append((site_code, site_name))
+        if not reserves:
+            raise ValueError(f"No site rows found in {csv_path}")
     except Exception as e:
-        print(f"Warning: Could not load sites.csv: {e}")
-        # Fallback to minimal list
-        reserves = [
-            ("Bodega", "Bodega Marine Reserve"),
-            ("QuailRidge", "Quail Ridge Reserve"),
-        ]
+        print(
+            "Warning: Could not load site lookup data. "
+            f"Expected {csv_path}. Copy example_data/sites.csv to local_data/sites.csv and edit it. Error: {e}"
+        )
+        reserves = []
 
     return reserves
 
 
 def load_plot_names_from_csv():
-    """Load plot names from data/plots.csv"""
+    """Load plot names from local_data/plots.csv."""
     plot_names = {}
-    csv_path = _BUNDLE_DIR / "data" / "plots.csv"
+    csv_path = _required_local_csv_path("plots.csv")
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -119,7 +125,10 @@ def load_plot_names_from_csv():
                 if 1 <= plot_number <= 4 and plot_name:
                     plot_names[site_code][plot_number - 1] = plot_name
     except Exception as e:
-        print(f"Warning: Could not load plots.csv: {e}")
+        print(
+            "Warning: Could not load plot lookup data. "
+            f"Expected {csv_path}. Copy example_data/plots.csv to local_data/plots.csv and edit it. Error: {e}"
+        )
         plot_names = {}
 
     return plot_names

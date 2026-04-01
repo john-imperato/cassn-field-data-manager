@@ -48,6 +48,7 @@ box_tokens.json
 
 # Staging data (local only)
 CASSN_field_data_staging/
+local_data/
 
 # Logs
 *.log
