@@ -11,15 +11,16 @@ Runs the Box OAuth setup flow and writes reusable Box tokens to
 
 ### When to use
 
-Use this script the first time you connect the app to Box, or any time your
-saved Box tokens stop working and need to be refreshed.
+Use this script the first time you connect `cassn_field_data_manager.py` to Box,
+or any time your saved Box tokens stop working and need to be refreshed.
 
 ### Requirements
 ```bash
 pip install box-sdk-gen
 ```
 
-You also need a valid Box app config at `~/.cassn_credentials/config.json`.
+You also need `~/.cassn_credentials/config.json` with your Box app
+`client_id` and `client_secret`.
 
 To verify `box-sdk-gen` is installed:
 
@@ -33,7 +34,7 @@ python3 -c "import box_sdk_gen; print('box-sdk-gen ok')"
    ```bash
    ls ~/.cassn_credentials/config.json
    ```
-2. If needed, create it from the example file:
+2. If `~/.cassn_credentials/config.json` does not exist, create it from the example file:
    ```bash
    mkdir -p ~/.cassn_credentials
    cp config.json.example ~/.cassn_credentials/config.json
@@ -45,7 +46,7 @@ python3 -c "import box_sdk_gen; print('box-sdk-gen ok')"
 python3 utils/box_auth_setup.py
 ```
 
-The script will:
+During the OAuth flow, `box_auth_setup.py` will:
 
 1. Open your browser to the Box authorization page.
 2. Ask you to log in and grant access.
@@ -63,7 +64,7 @@ On success, the script writes:
 
 That token file is then used by:
 
-- the main app
+- `cassn_field_data_manager.py`
 - `recover_file_metadata.py`
 
 ### Notes
@@ -87,8 +88,8 @@ then regenerating:
 
 ### When to use
 
-If the app completed SD card processing and Box upload successfully but
-the deployment metadata artifacts were not written locally or need to be rebuilt.
+Use this script when a deployment was successfully uploaded to Box but the
+local metadata artifacts were missing, incomplete, or need to be rebuilt.
 
 ### Requirements
 ```bash
@@ -117,6 +118,7 @@ Pillow is required. The script fails immediately if EXIF support is unavailable.
    ```
 4. Find the Box deployment folder ID from the Box URL:
    - `https://app.box.com/folder/123456789012`
+   - Use the top-level deployment folder ID, not the `raw_data` subfolder ID
 
 ### Run
 ```bash
@@ -141,7 +143,7 @@ The script creates a local recovery folder under:
 /Volumes/G-DRIVE ArmorATD/cassn-field-data-staging/<deployment-folder-name>/
 ```
 
-That folder contains:
+That recovery folder contains:
 
 - the downloaded Box deployment contents
 - `file_metadata.csv`
@@ -157,5 +159,6 @@ If the deployment folder already exists locally, the script fails and does not o
 - Downloads the entire deployment and preserves the Box folder structure
 - Uses Box modified time for the recovered `timestamp` field
 - Sets unrecoverable fields such as `original_filename` and `source_path` to `NA`
-- Does not upload any recovered files back to Box
+- Writes recovered outputs locally only; it does not upload `file_metadata.csv`
+  or `manifest.json` back to Box
 - Writes `recovery_report.json` even when the run completes with failures
