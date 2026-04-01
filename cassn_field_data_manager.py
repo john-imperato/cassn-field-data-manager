@@ -109,6 +109,7 @@ def load_reserves_from_csv():
 def load_plot_names_from_csv():
     """Load plot names from local_data/plots.csv."""
     plot_names = {}
+    plot_metadata = {}
     csv_path = _required_local_csv_path("plots.csv")
 
     try:
@@ -118,26 +119,36 @@ def load_plot_names_from_csv():
                 site_code = row['site_code'].strip()
                 plot_number = int(row['plot_number'])
                 plot_name = row['plot_name'].strip()
+                plot_latitude = row.get('plot_latitude', '').strip()
+                plot_longitude = row.get('plot_longitude', '').strip()
+                plot_description = row.get('plot_description', '').strip()
 
                 if site_code not in plot_names:
                     plot_names[site_code] = [None, None, None, None]
 
                 if 1 <= plot_number <= 4 and plot_name:
                     plot_names[site_code][plot_number - 1] = plot_name
+                plot_metadata[(site_code, plot_number)] = {
+                    'plot_name': plot_name,
+                    'plot_latitude': plot_latitude,
+                    'plot_longitude': plot_longitude,
+                    'plot_description': plot_description,
+                }
     except Exception as e:
         print(
             "Warning: Could not load plot lookup data. "
             f"Expected {csv_path}. Copy example_data/plots.csv to local_data/plots.csv and edit it. Error: {e}"
         )
         plot_names = {}
+        plot_metadata = {}
 
-    return plot_names
+    return plot_names, plot_metadata
 
 
 # Organization and reserve lists
 ORGANIZATIONS = ["UC"]
 RESERVES = load_reserves_from_csv()
-PLOT_NAMES = load_plot_names_from_csv()
+PLOT_NAMES, PLOT_METADATA = load_plot_names_from_csv()
 
 # Device type definitions
 DEVICE_TYPES = {
@@ -997,6 +1008,7 @@ class FieldDataWizard(QMainWindow):
 
         org = self.metadata['organization']
         site = self.metadata['site']
+        plot_metadata = PLOT_METADATA.get((site, plot_num), {})
 
         for root, dirs, files in os.walk(source_dir):
             for filename in files:
@@ -1041,6 +1053,8 @@ class FieldDataWizard(QMainWindow):
                     'file_hash_sha256': file_hash,
                     'source_path': str(source_path),
                     'timestamp': datetime.fromtimestamp(dest_path.stat().st_mtime).isoformat(),
+                    'latitude': plot_metadata.get('plot_latitude') or '',
+                    'longitude': plot_metadata.get('plot_longitude') or '',
                     'exif_datetime': exif_data.get('DateTime'),
                     'exif_make': exif_data.get('Make'),
                     'exif_model': exif_data.get('Model'),
