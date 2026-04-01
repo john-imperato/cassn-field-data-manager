@@ -30,10 +30,19 @@ Pillow is required. The script fails immediately if EXIF support is unavailable.
 1. Confirm Box credentials exist in `~/.cassn_credentials/`:
    - `config.json`
    - `box_tokens.json`
+   ```bash
+   ls ~/.cassn_credentials/config.json ~/.cassn_credentials/box_tokens.json
+   ```
 2. Open [`utils/recover_file_metadata.py`](/tmp/cassn-rewrite-main/utils/recover_file_metadata.py) and confirm the hard-coded recovery root matches your machine:
    - `RECOVERY_ROOT = Path("/Volumes/G-DRIVE ArmorATD/cassn-field-data-staging")`
    - Change this path if you want recovered deployments written somewhere else
+   ```bash
+   rg -n 'RECOVERY_ROOT' utils/recover_file_metadata.py
+   ```
 3. Confirm that recovery path exists and is writable on your machine.
+   ```bash
+   ls "/Volumes/G-DRIVE ArmorATD/cassn-field-data-staging"
+   ```
 4. Find the Box deployment folder ID from the Box URL:
    - `https://app.box.com/folder/123456789012`
 
