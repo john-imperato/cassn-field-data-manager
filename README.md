@@ -99,16 +99,15 @@ chmod 600 ~/.cassn_credentials/config.json
 After configuring `~/.cassn_credentials/config.json`, authenticate with Box:
 
 ```bash
-python box_auth_setup.py
-cp box_tokens.json ~/.cassn_credentials/
+python3 utils/box_auth_setup.py
 ```
 
 Follow the prompts to:
 - Open the Box authorization URL in your browser
 - Grant access to the application
-- Copy the authorization code back to the terminal
+- Paste the full redirect URL back into the terminal
 
-This creates a `box_tokens.json` file that enables automatic cloud uploads. Box tokens expire after ~60 days — re-run the above commands to refresh them.
+This creates or refreshes `~/.cassn_credentials/box_tokens.json`, which enables automatic cloud uploads. For detailed Box utility documentation, see [`utils/README.md`](utils/README.md). Box tokens expire after ~60 days — re-run the command above to refresh them.
 
 ### 2. Run the Application
 

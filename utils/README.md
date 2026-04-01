@@ -4,6 +4,78 @@ Helper scripts for maintenance and data recovery tasks.
 
 ---
 
+## `box_auth_setup.py`
+
+Runs the Box OAuth setup flow and writes reusable Box tokens to
+`~/.cassn_credentials/box_tokens.json`.
+
+### When to use
+
+Use this script the first time you connect the app to Box, or any time your
+saved Box tokens stop working and need to be refreshed.
+
+### Requirements
+```bash
+pip install box-sdk-gen
+```
+
+You also need a valid Box app config at `~/.cassn_credentials/config.json`.
+
+To verify `box-sdk-gen` is installed:
+
+```bash
+python3 -c "import box_sdk_gen; print('box-sdk-gen ok')"
+```
+
+### Setup
+
+1. Confirm your Box credentials file exists:
+   ```bash
+   ls ~/.cassn_credentials/config.json
+   ```
+2. If needed, create it from the example file:
+   ```bash
+   mkdir -p ~/.cassn_credentials
+   cp config.json.example ~/.cassn_credentials/config.json
+   ```
+3. Edit `~/.cassn_credentials/config.json` and add your Box app `client_id` and `client_secret`.
+
+### Run
+```bash
+python3 utils/box_auth_setup.py
+```
+
+The script will:
+
+1. Open your browser to the Box authorization page.
+2. Ask you to log in and grant access.
+3. Ask you to paste the full redirect URL back into the terminal.
+4. Exchange that authorization code for tokens.
+5. Save `box_tokens.json` to `~/.cassn_credentials/`.
+
+### Output
+
+On success, the script writes:
+
+```text
+~/.cassn_credentials/box_tokens.json
+```
+
+That token file is then used by:
+
+- the main app
+- `recover_file_metadata.py`
+
+### Notes
+
+- If the script finds an existing token file, it tests that connection first
+- If the existing token is invalid, it falls back to a fresh OAuth flow
+- Refreshed tokens are written back to `~/.cassn_credentials/box_tokens.json` automatically
+- The browser may redirect to a page that does not load; that is expected
+- Paste the entire redirect URL, not just the authorization code
+
+---
+
 ## `recover_file_metadata.py`
 
 Recovers a deployment by downloading the full Box folder to the staging drive,

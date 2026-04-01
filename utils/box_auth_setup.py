@@ -1,13 +1,18 @@
+import json
+from pathlib import Path
+import webbrowser
+
 from box_sdk_gen import BoxClient, BoxDeveloperTokenAuth
 from box_sdk_gen import BoxOAuth, OAuthConfig
-import json
-import webbrowser
-from pathlib import Path
+
+
+CONFIG_DIR = Path.home() / ".cassn_credentials"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Load credentials from config.json
 def load_box_config():
     """Load Box configuration from config.json"""
-    config_path = Path(__file__).parent / "config.json"
+    config_path = CONFIG_DIR / "config.json"
     if not config_path.exists():
         raise FileNotFoundError(
             f"Config file not found: {config_path}\n"
@@ -25,8 +30,7 @@ except FileNotFoundError as e:
     print(f"Error: {e}")
     exit(1)
 
-# Store tokens in same folder as script
-TOKEN_FILE = Path(__file__).parent / 'box_tokens.json'
+TOKEN_FILE = CONFIG_DIR / 'box_tokens.json'
 
 def store_tokens(access_token, refresh_token):
     """Save tokens to file"""
