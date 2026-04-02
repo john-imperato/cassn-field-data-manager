@@ -113,27 +113,34 @@ def load_plot_names_from_csv():
     csv_path = _required_local_csv_path("plots.csv")
 
     try:
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                site_code = row['site_code'].strip()
-                plot_number = int(row['plot_number'])
-                plot_name = row['plot_name'].strip()
-                plot_latitude = row.get('plot_latitude', '').strip()
-                plot_longitude = row.get('plot_longitude', '').strip()
-                plot_description = row.get('plot_description', '').strip()
+        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                with open(csv_path, 'r', encoding=encoding) as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        site_code = row['site_code'].strip()
+                        plot_number = int(row['plot_number'])
+                        plot_name = row['plot_name'].strip()
+                        plot_latitude = row.get('plot_latitude', '').strip()
+                        plot_longitude = row.get('plot_longitude', '').strip()
+                        plot_description = row.get('plot_description', '').strip()
 
-                if site_code not in plot_names:
-                    plot_names[site_code] = [None, None, None, None]
+                        if site_code not in plot_names:
+                            plot_names[site_code] = [None, None, None, None]
 
-                if 1 <= plot_number <= 4 and plot_name:
-                    plot_names[site_code][plot_number - 1] = plot_name
-                plot_metadata[(site_code, plot_number)] = {
-                    'plot_name': plot_name,
-                    'plot_latitude': plot_latitude,
-                    'plot_longitude': plot_longitude,
-                    'plot_description': plot_description,
-                }
+                        if 1 <= plot_number <= 4 and plot_name:
+                            plot_names[site_code][plot_number - 1] = plot_name
+                        plot_metadata[(site_code, plot_number)] = {
+                            'plot_name': plot_name,
+                            'plot_latitude': plot_latitude,
+                            'plot_longitude': plot_longitude,
+                            'plot_description': plot_description,
+                        }
+                break  # successfully read — stop trying encodings
+            except UnicodeDecodeError:
+                plot_names = {}
+                plot_metadata = {}
+                continue
     except Exception as e:
         print(
             "Warning: Could not load plot lookup data. "
@@ -396,7 +403,11 @@ class FieldDataWizard(QMainWindow):
         # Load saved config
         self.config_file = Path.home() / ".cassn_credentials" / "config.json"
         self.load_config()
-        
+
+        # Load Wildlife Insights lookup tables
+        self.wi_camera_metadata = self._load_wi_camera_metadata()
+        self.wi_config = self._load_wi_config()
+
         # Check Box authentication
         self.box_authenticated = self.check_box_auth()
         
@@ -1154,9 +1165,177 @@ class FieldDataWizard(QMainWindow):
         manifest_path = self.current_deployment_folder / "manifest.json"
         with open(manifest_path, 'w') as f:
             json.dump(manifest, f, indent=2)
-        
+
         self.log(f"Generated: manifest.json")
+
+        self._wi_status_lines = self.generate_wi_deployments()
     
+    # ------------------------------------------------------------------
+    # Wildlife Insights helpers
+    # ------------------------------------------------------------------
+
+    def _load_wi_camera_metadata(self) -> dict:
+        """Load local_data/cameras.csv → dict keyed (site_code, plot_number_int, device_type)."""
+        path = _LOCAL_DATA_DIR / "cameras.csv"
+        if not path.exists():
+            return {}
+        result = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    try:
+                        key = (row["site_code"].strip(), int(row["plot_number"]), row["device_type"].strip())
+                        result[key] = row
+                    except (KeyError, ValueError):
+                        continue
+        except Exception as e:
+            self.log(f"Warning: could not load cameras.csv: {e}")
+        return result
+
+    def _load_wi_config(self) -> dict:
+        """Load local_data/wi_config.json."""
+        path = _LOCAL_DATA_DIR / "wi_config.json"
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            self.log(f"Warning: could not load wi_config.json: {e}")
+            return {}
+
+    def _load_wi_plot_coords(self) -> dict:
+        """Load local_data/plots.csv → dict keyed (site_code, plot_number_int)."""
+        path = _LOCAL_DATA_DIR / "plots.csv"
+        if not path.exists():
+            return {}
+        result = {}
+        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                with open(path, "r", encoding=encoding) as f:
+                    for row in csv.DictReader(f):
+                        try:
+                            key = (row["site_code"].strip(), int(row["plot_number"]))
+                            result[key] = {
+                                "latitude": row.get("plot_latitude", "").strip(),
+                                "longitude": row.get("plot_longitude", "").strip(),
+                            }
+                        except (KeyError, ValueError):
+                            continue
+                return result
+            except UnicodeDecodeError:
+                result = {}
+        return result
+
+    def generate_wi_deployments(self) -> list[str]:
+        """Generate Wildlife Insights deployment CSVs into WI_metadata/ subfolder.
+
+        Returns a list of status strings for the review tab.
+        """
+        WI_COLUMNS = [
+            "project_id", "deployment_id", "subproject_name", "subproject_design",
+            "placename", "longitude", "latitude", "start_date", "end_date",
+            "event_name", "event_description", "event_type", "bait_type", "bait_description",
+            "feature_type", "feature_type_methodology", "camera_id", "quiet_period",
+            "camera_functioning", "sensor_height", "height_other", "sensor_orientation",
+            "orientation_other", "recorded_by", "plot_treatment", "plot_treatment_description",
+            "detection_distance",
+        ]
+        CAMERA_DEVICE_TYPES = {"ML", "SA"}
+
+        status_lines = []
+
+        if not self.wi_config:
+            msg = "Skipping Wildlife Insights export: wi_config.json not found in local_data/"
+            self.log(msg)
+            status_lines.append(msg)
+            return status_lines
+
+        plot_coords = self._load_wi_plot_coords()
+
+        site = self.metadata.get("site", "")
+        org = self.metadata.get("organization", "")
+        start = self.metadata.get("deployment_start", "")
+        end = self.metadata.get("deployment_end", "")
+        observer = self.metadata.get("observer", "")
+        subproject_name = f"{org}_{site}_{end.replace('-', '')}"
+
+        try:
+            from datetime import datetime as _dt
+            s = _dt.strptime(start, "%Y-%m-%d")
+            e = _dt.strptime(end, "%Y-%m-%d")
+            event_name = f"{s.strftime('%Y%b').upper()}-{e.strftime('%Y%b').upper()}"
+        except Exception:
+            event_name = ""
+
+        rows_by_type: dict[str, list[dict]] = {}
+
+        for plot_num, _plot_label, dev_type, _dev_label in self.devices:
+            if dev_type not in CAMERA_DEVICE_TYPES:
+                continue
+            try:
+                plot_num_int = int(plot_num)
+            except (TypeError, ValueError):
+                plot_num_int = None
+
+            cam = self.wi_camera_metadata.get((site, plot_num_int, dev_type), {}) if plot_num_int else {}
+            coords = plot_coords.get((site, plot_num_int), {}) if plot_num_int else {}
+
+            camera_id = cam.get("camera_id", "")
+            if not camera_id:
+                self.log(f"  WI Warning: camera_id missing for {site} plot {plot_num} {dev_type}")
+
+            row = {
+                "project_id": self.wi_config.get(f"project_id_{dev_type}", ""),
+                "deployment_id": f"{org}_{site}_plot{plot_num}_{dev_type}_{end.replace('-', '')}",
+                "subproject_name": subproject_name,
+                "subproject_design": "",
+                "placename": f"{site}_plot{plot_num}",
+                "longitude": coords.get("longitude", ""),
+                "latitude": coords.get("latitude", ""),
+                "start_date": f"{start} 00:00:00" if start else "",
+                "end_date": f"{end} 23:59:59" if end else "",
+                "event_name": event_name,
+                "event_description": "",
+                "event_type": self.wi_config.get("event_type", "Temporal"),
+                "bait_type": self.wi_config.get(f"bait_type_{dev_type}", ""),
+                "bait_description": self.wi_config.get(f"bait_description_{dev_type}", ""),
+                "feature_type": cam.get("feature_type", ""),
+                "feature_type_methodology": "",
+                "camera_id": camera_id,
+                "quiet_period": self.wi_config.get("quiet_period", 0),
+                "camera_functioning": self.wi_config.get("camera_functioning_default", "Camera Functioning"),
+                "sensor_height": cam.get("sensor_height", "Knee height"),
+                "height_other": "",
+                "sensor_orientation": cam.get(
+                    "sensor_orientation",
+                    "Parallel" if dev_type == "ML" else "Pointed Downward"
+                ),
+                "orientation_other": "",
+                "recorded_by": observer,
+                "plot_treatment": "",
+                "plot_treatment_description": "",
+                "detection_distance": "",
+            }
+            rows_by_type.setdefault(dev_type, []).append(row)
+
+        wi_dir = self.current_deployment_folder / "WI_metadata"
+        wi_dir.mkdir(exist_ok=True)
+
+        for dev_type in sorted(rows_by_type):
+            rows = rows_by_type[dev_type]
+            filename = f"wildlife_insights_{dev_type}_deployments.csv"
+            out_path = wi_dir / filename
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=WI_COLUMNS)
+                writer.writeheader()
+                writer.writerows(rows)
+            msg = f"Generated: WI_metadata/{filename} ({len(rows)} rows)"
+            self.log(msg)
+            status_lines.append(f"  - {filename} ({len(rows)} rows)")
+
+        return status_lines
+
     def update_review_tab(self):
         """Update review summary"""
         summary = []
@@ -1211,7 +1390,17 @@ class FieldDataWizard(QMainWindow):
         summary.append("  - file_metadata.csv")
         summary.append(f"  - raw_data/ ({total_files} files in device subfolders)")
         summary.append("")
-        
+
+        summary.append("WILDLIFE INSIGHTS")
+        summary.append("-" * 60)
+        wi_lines = getattr(self, "_wi_status_lines", [])
+        if wi_lines:
+            for line in wi_lines:
+                summary.append(line)
+        else:
+            summary.append("  Skipped (wi_config.json not found in local_data/)")
+        summary.append("")
+
         if self.upload_to_box_cb.isChecked():
             summary.append("Box Upload: In progress or will be uploaded...")
         
