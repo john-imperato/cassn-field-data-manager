@@ -172,30 +172,28 @@ If the deployment folder already exists locally, the script fails and does not o
 
 ## `generate_wi_deployments.py`
 
-Generates Wildlife Insights (WI) bulk-upload deployment CSVs for all deployments in Box,
-then uploads them back to Box. Can also process a single local deployment folder for testing.
+Generates Wildlife Insights deployment CSVs from CASSN deployment folders.
 
-Each deployment event produces two CSVs — one per camera type — written into a
-`WI_metadata/` subfolder inside the deployment folder:
+It can either:
+- scan Box for deployment folders and generate WI CSVs in bulk, then upload them back to Box
+- or process one local deployment folder for testing
+
+For each deployment event, the script writes two CSVs into a `WI_metadata/`
+subfolder:
 
 - `wildlife_insights_ML_deployments.csv` — one row per ML (parallel) camera plot
 - `wildlife_insights_SA_deployments.csv` — one row per SA (downward) camera plot
 
-These files are formatted for direct import into the Wildlife Insights bulk upload interface.
-
-### Terminology
-
-| CASSN term | WI term |
-|---|---|
-| Deployment event (4 cameras, ~10 weeks) | Event / subproject |
-| Individual camera out for a period | Deployment |
+These files are formatted for direct upload into Wildlife Insights.
 
 ### When to use
 
-- **Backfill:** Run once after a field event to generate WI CSVs for all deployments in Box.
-- **New deployments:** Run after each new deployment folder is uploaded to Box.
-- **Main app (future):** This logic will be wired into Tab 3 of `cassn_field_data_manager.py`
-  so WI CSVs are generated automatically at finalize time.
+- Run this after a deployment has already been uploaded to Box and you need the
+  WI deployment CSVs.
+- Use the local mode if you want to test one deployment folder before doing a
+  broader backfill.
+- If WI CSVs already exist in a deployment folder, the script skips that folder
+  unless you use `--force`.
 
 ### Requirements
 
@@ -203,18 +201,18 @@ These files are formatted for direct import into the Wildlife Insights bulk uplo
 pip install box-sdk-gen
 ```
 
-No additional packages needed beyond the main app requirements.
+No extra dependencies beyond `box-sdk-gen`.
 
 ### Setup
 
-Two local data files must exist before running. Both are gitignored — they contain
-project IDs and camera serial numbers that are specific to your machine and should
-not be committed.
+This script depends on two local files in `local_data/`. These are gitignored on
+purpose because they contain project IDs and camera serial numbers you do not
+want committed.
 
 #### 1. `local_data/cameras.csv`
 
-Maps each site + plot + camera type to a physical camera serial number and WI-required
-field attributes. Copy the template and fill in your values:
+Maps each site + plot + camera type to the physical camera used there, plus a
+few WI-required fields. Create it from the example:
 
 ```bash
 cp example_data/cameras.csv local_data/cameras.csv
