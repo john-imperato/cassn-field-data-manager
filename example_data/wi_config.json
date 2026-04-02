@@ -1,0 +1,11 @@
+{
+  "project_id_ML": "YOUR_WI_PROJECT_ID_FOR_UCNRS_MAMMAL",
+  "project_id_SA": "YOUR_WI_PROJECT_ID_FOR_UCNRS_SMALL_ANIMAL",
+  "bait_type_ML": "Scent",
+  "bait_type_SA": "Scent",
+  "bait_description_ML": "",
+  "bait_description_SA": "",
+  "event_type": "Temporal",
+  "quiet_period": 0,
+  "camera_functioning_default": "Camera Functioning"
+}

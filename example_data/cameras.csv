@@ -1,0 +1,5 @@
+site_code,plot_number,device_type,camera_id,feature_type,sensor_height,sensor_orientation
+ExampleSite,1,ML,SN123456,Road dirt,Knee height,Parallel
+ExampleSite,1,SA,SN789012,Road dirt,Knee height,Pointed Downward
+ExampleSite,2,ML,SN345678,Trail game,Knee height,Parallel
+ExampleSite,2,SA,SN901234,Trail game,Knee height,Pointed Downward
