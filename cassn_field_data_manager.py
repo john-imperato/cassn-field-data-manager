@@ -413,7 +413,12 @@ class FieldDataWizard(QMainWindow):
         
         # Build UI
         self.init_ui()
-    
+
+        # Offer to resume an in-progress session
+        session_path, session_data = self.find_resumable_session()
+        if session_path and session_data:
+            self.offer_resume_session(session_path, session_data)
+
     def check_box_auth(self):
         """Check if Box is authenticated"""
         if not BOX_AVAILABLE:
@@ -453,6 +458,155 @@ class FieldDataWizard(QMainWindow):
                 json.dump({'staging_root': str(self.staging_root)}, f)
         except:
             pass
+
+    # ------------------------------------------------------------------
+    # Session persistence
+    # ------------------------------------------------------------------
+
+    def save_session(self):
+        """Persist current app state to session.json in the deployment folder."""
+        try:
+            if self.current_deployment_folder is None:
+                return
+
+            device_statuses = {}
+            for i in range(self.device_tree.topLevelItemCount()):
+                item = self.device_tree.topLevelItem(i)
+                if i < len(self.devices):
+                    device_label = self.devices[i][3]
+                    device_statuses[device_label] = {
+                        "status": item.text(2),
+                        "files_copied": item.text(3),
+                    }
+
+            session = {
+                "schema_version": 1,
+                "saved_at": datetime.now().isoformat(),
+                "metadata": self.metadata,
+                "devices": self.devices,
+                "device_statuses": device_statuses,
+                "file_inventory": self.file_inventory,
+                "deployment_folder": str(self.current_deployment_folder),
+            }
+
+            session_path = self.current_deployment_folder / "session.json"
+            with open(session_path, "w") as f:
+                json.dump(session, f, indent=2, default=str)
+        except Exception:
+            pass  # never crash the app on a failed save
+
+    def find_resumable_session(self) -> tuple:
+        """Scan staging_root for valid session.json files. Returns (path, data) of most recent."""
+        try:
+            if not self.staging_root.exists():
+                return None, None
+
+            candidates = []
+            for subdir in self.staging_root.iterdir():
+                if not subdir.is_dir():
+                    continue
+                session_file = subdir / "session.json"
+                if not session_file.exists():
+                    continue
+                try:
+                    with open(session_file, "r") as f:
+                        data = json.load(f)
+                    if data.get("schema_version") != 1:
+                        continue
+                    folder = Path(data.get("deployment_folder", ""))
+                    if not folder.exists():
+                        continue
+                    saved_at = datetime.fromisoformat(data["saved_at"])
+                    candidates.append((saved_at, session_file, data))
+                except Exception:
+                    continue
+
+            if not candidates:
+                return None, None
+
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            _, best_path, best_data = candidates[0]
+            return best_path, best_data
+
+        except Exception:
+            return None, None
+
+    def offer_resume_session(self, session_path, session_data):
+        """Prompt the user to resume a saved session."""
+        meta = session_data.get("metadata", {})
+        statuses = session_data.get("device_statuses", {})
+        total = len(statuses)
+        completed = sum(1 for v in statuses.values() if v.get("status") in ("Complete", "Skipped"))
+
+        reply = QMessageBox.question(
+            self,
+            "Resume Previous Session",
+            f"An in-progress deployment was found:\n\n"
+            f"  Reserve:  {meta.get('reserve_name', '—')}\n"
+            f"  Period:   {meta.get('deployment_start', '—')} to {meta.get('deployment_end', '—')}\n"
+            f"  Progress: {completed} of {total} devices done\n\n"
+            "Resume where you left off?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            self.restore_session(session_data)
+
+    def restore_session(self, session_data):
+        """Restore app state from a saved session dict."""
+        self.metadata = session_data.get("metadata", {})
+        self.devices = [tuple(d) for d in session_data.get("devices", [])]
+        self.file_inventory = session_data.get("file_inventory", [])
+        self.current_deployment_folder = Path(session_data["deployment_folder"])
+
+        # Restore Tab 0 UI widgets
+        idx = self.org_combo.findText(self.metadata.get("organization", ""))
+        if idx >= 0:
+            self.org_combo.setCurrentIndex(idx)
+
+        idx = self.reserve_combo.findText(self.metadata.get("reserve_name", ""))
+        if idx >= 0:
+            self.reserve_combo.setCurrentIndex(idx)
+
+        self.site_code_edit.setText(self.metadata.get("site", ""))
+
+        from PySide6.QtCore import QDate
+        start = QDate.fromString(self.metadata.get("deployment_start", ""), "yyyy-MM-dd")
+        if start.isValid():
+            self.deploy_start_date.setDate(start)
+        end = QDate.fromString(self.metadata.get("deployment_end", ""), "yyyy-MM-dd")
+        if end.isValid():
+            self.deploy_end_date.setDate(end)
+
+        observer = self.metadata.get("observer", "")
+        idx = self.observer_combo.findText(observer)
+        if idx >= 0:
+            self.observer_combo.setCurrentIndex(idx)
+            self.observer_other_edit.hide()
+        else:
+            other_idx = self.observer_combo.findText("Other")
+            if other_idx >= 0:
+                self.observer_combo.setCurrentIndex(other_idx)
+            self.observer_other_edit.setText(observer)
+            self.observer_other_edit.show()
+
+        self.clear_all_devices()
+        for plot_num, _plot_label, dev_code, _dev_label in self.devices:
+            if plot_num in self.device_checkboxes and dev_code in self.device_checkboxes[plot_num]:
+                self.device_checkboxes[plot_num][dev_code].setChecked(True)
+
+        # Rebuild collection tree and restore per-device statuses
+        self.populate_collection_list()
+        statuses = session_data.get("device_statuses", {})
+        for i in range(self.device_tree.topLevelItemCount()):
+            if i < len(self.devices):
+                device_label = self.devices[i][3]
+                if device_label in statuses:
+                    self.device_tree.topLevelItem(i).setText(2, statuses[device_label].get("status", "Pending"))
+                    self.device_tree.topLevelItem(i).setText(3, str(statuses[device_label].get("files_copied", "0")))
+
+        self.tabs.setCurrentIndex(1)
+        self.log(f"Resumed session: {len(self.file_inventory)} files already in inventory.")
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -943,7 +1097,9 @@ class FieldDataWizard(QMainWindow):
         metadata_file = self.current_deployment_folder / "deployment_metadata.json"
         with open(metadata_file, 'w') as f:
             json.dump(self.metadata, f, indent=2)
-    
+
+        self.save_session()
+
     def populate_collection_list(self):
         """Populate device tree with selected devices"""
         self.device_tree.clear()
@@ -1004,9 +1160,13 @@ class FieldDataWizard(QMainWindow):
             )
             
             selected.setText(2, "Complete")
-            selected.setText(3, str(files_copied))
-            
-            self.log(f"✓ Completed! {files_copied} files copied.\n")
+            total_for_device = sum(
+                1 for entry in self.file_inventory if entry['device_label'] == device_label
+            )
+            selected.setText(3, str(total_for_device))
+            self.save_session()
+
+            self.log(f"✓ Completed! {total_for_device} files copied.\n")
             
         except Exception as e:
             self.log(f"✗ Error: {str(e)}\n")
@@ -1015,7 +1175,20 @@ class FieldDataWizard(QMainWindow):
     def process_sd_card_files(self, source_dir, dest_dir, plot_num, plot_label, dev_code, device_label):
         """Process files from SD card."""
         files_copied = 0
-        file_sequence = 1
+
+        # Resume support: skip files already in inventory for this device
+        already_copied = {
+            entry['original_filename']
+            for entry in self.file_inventory
+            if entry['device_label'] == device_label
+        }
+        prior_media_count = sum(
+            1 for entry in self.file_inventory
+            if entry['device_label'] == device_label and entry['file_type'] != 'config'
+        )
+        file_sequence = prior_media_count + 1
+        if already_copied:
+            self.log(f"  {len(already_copied)} files already copied for {device_label}, resuming...")
 
         # Deployment end date for media filenames (YYYYMM)
         deploy_date = datetime.strptime(self.metadata['deployment_end'], "%Y-%m-%d")
@@ -1041,6 +1214,10 @@ class FieldDataWizard(QMainWindow):
                 if file_type == "other":
                     continue
 
+                # Skip files already successfully copied in a prior session
+                if filename in already_copied:
+                    continue
+
                 if file_type == "config":
                     # Rename: ORG_SITE_DEVCODE_YYYYMMDD_CONFIG_01.txt
                     new_filename = f"{org}_{site}_{dev_code}_{start_date_str}_CONFIG_01{file_ext}"
@@ -1051,6 +1228,13 @@ class FieldDataWizard(QMainWindow):
                     new_filename = f"{org}_{site}_plot{plot_num}_{dev_code}_{date_str}_{seq_str}{file_ext}"
                     dest_path = dest_dir / new_filename
                     file_sequence += 1
+
+                # Remove any partial file left by a previously interrupted copy
+                if dest_path.exists():
+                    try:
+                        dest_path.unlink()
+                    except Exception as e:
+                        self.log(f"  Warning: could not remove partial file {dest_path.name}: {e}")
 
                 shutil.copy2(source_path, dest_path)
 
@@ -1082,6 +1266,8 @@ class FieldDataWizard(QMainWindow):
                 self.file_inventory.append(file_info)
                 files_copied += 1
 
+                if files_copied % 10 == 0:
+                    self.save_session()
                 if files_copied % 50 == 0:
                     self.log(f"  ...{files_copied} files processed")
 
@@ -1099,7 +1285,8 @@ class FieldDataWizard(QMainWindow):
         
         selected.setText(2, "Skipped")
         selected.setText(3, "0")
-        
+        self.save_session()
+
         self.log(f"Skipped Plot {plot_num} - {DEVICE_TYPES[dev_code]}\n")
     
     def validate_and_next_collection(self):
@@ -1489,6 +1676,11 @@ class FieldDataWizard(QMainWindow):
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
+            # Clean up session file before clearing state
+            if self.current_deployment_folder:
+                session_file = self.current_deployment_folder / "session.json"
+                session_file.unlink(missing_ok=True)
+
             self.metadata = {}
             self.devices = []
             self.file_inventory = []
