@@ -314,24 +314,32 @@ class BoxUploadThread(QThread):
             site_folder   = self.find_or_create_folder(self.client, year_folder.id, reserve_name)
             deploy_folder = self.find_or_create_folder(self.client, site_folder.id, deploy_name)
             
-            # Count total files
-            total_files = sum(1 for _ in self.deployment_folder.rglob('*') if _.is_file())
+            uploadable_files = [
+                path for path in self.deployment_folder.rglob('*')
+                if path.is_file() and self.should_upload_file(path)
+            ]
+            total_files = len(uploadable_files)
             uploaded = 0
             
             # Upload all files
-            for file_path in self.deployment_folder.rglob('*'):
-                if file_path.is_file():
-                    rel_path = file_path.relative_to(self.deployment_folder)
-                    self.upload_file_with_path(
-                        file_path, deploy_folder.id, rel_path
-                    )
-                    uploaded += 1
-                    self.progress.emit(uploaded, total_files, file_path.name)
+            for file_path in uploadable_files:
+                rel_path = file_path.relative_to(self.deployment_folder)
+                self.upload_file_with_path(
+                    file_path, deploy_folder.id, rel_path
+                )
+                uploaded += 1
+                self.progress.emit(uploaded, total_files, file_path.name)
             
             self.finished.emit(True, f"Successfully uploaded {uploaded} files to Box")
             
         except Exception as e:
             self.finished.emit(False, f"Upload error: {str(e)}")
+
+    @staticmethod
+    def should_upload_file(file_path):
+        """Skip macOS/Finder junk files from Box uploads."""
+        name = file_path.name
+        return not (name.startswith('.') or name.startswith('._'))
     
     def find_or_create_folder(self, client, parent_id, folder_name):
         """Find existing folder or create new one"""
