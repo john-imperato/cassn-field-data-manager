@@ -1265,9 +1265,9 @@ class FieldDataWizard(QMainWindow):
         if already_copied:
             self.log(f"  {len(already_copied)} files already copied for {device_label}, resuming...")
 
-        # Deployment end date for media filenames (YYYYMM)
+        # Deployment end date for media filenames (YYYYMMDD)
         deploy_date = datetime.strptime(self.metadata['deployment_end'], "%Y-%m-%d")
-        date_str = deploy_date.strftime("%Y%m")
+        date_str = deploy_date.strftime("%Y%m%d")
 
         # Deployment start date for config filenames (YYYYMMDD)
         deploy_start = datetime.strptime(self.metadata['deployment_start'], "%Y-%m-%d")
@@ -1435,7 +1435,7 @@ class FieldDataWizard(QMainWindow):
             'device_type', 'device_id', 'file_type', 'file_size_bytes',
             'file_hash_sha256', 'recorded_datetime', 'latitude', 'longitude',
             'camera_make', 'camera_model', 'sequence_trigger_type',
-            'sequence_event_num', 'sequence_position', 'sequence_total', 'source_path'
+            'sequence_event_num', 'sequence_position', 'sequence_total'
         ]
         
         with open(csv_path, 'w', newline='') as f:

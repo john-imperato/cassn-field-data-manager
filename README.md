@@ -1,6 +1,6 @@
 # CA-SSN Field Data Manager
 
-A Python desktop application for streamlined wildlife monitoring data collection and management. Designed for the University of California Natural Reserve System (UCNRS) California Sentinel Sites for Nature (CASSN) team working with camera traps and acoustic recorders across California.
+A Python desktop application for downloading, uploading, and managing wildlife image and audio data. Designed for the University of California Natural Reserve System (UCNRS) California Sentinel Sites for Nature (CASSN) team collecting standardized biodiversity data with camera traps and acoustic recorders across California.
 
 ![Version](https://img.shields.io/badge/version-2.2-blue)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
@@ -8,35 +8,19 @@ A Python desktop application for streamlined wildlife monitoring data collection
 
 ## Features
 
-- **Guided Workflow**: Step-by-step interface for multi-plot, multi-device data collection
-- **Sequence-Aware File Naming**: Camera images named by trigger event and position — `ORG_SITE_plotN_DEVTYPE_YYYYMM_EVENTNO_POS.ext` — grouping all photos from the same trigger together and preventing double-counting in abundance estimates
-- **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), and sequence total extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote — no external tools required
-- **Device Identification**: Physical device IDs recorded per file — camera serial numbers from `cameras.csv`, AudioMoth device IDs parsed from CONFIG.TXT
-- **Authoritative Timestamps**: `recorded_datetime` stored as ISO 8601 with UTC offset (e.g. `2025-12-04T15:48:05-08:00`), sourced from EXIF for cameras and AudioMoth filename for audio; DST-aware via `zoneinfo`
-- **Session Persistence**: Interrupted downloads resume automatically — previously copied files are skipped and sequence/event numbering continues correctly
-- **Metadata Extraction**: Automatic EXIF data extraction from images
-- **Data Integrity**: SHA-256 file hashing for verification
+- **Guided Workflow**: Step-by-step interface for SD card download and cloud storage upload across multi-plot, multi-device deployments
+- **Standardized File Naming**: Files renamed to a consistent convention (`ORG_SITE_plotN_DEVTYPE_YYYYMMDD_SEQNO.ext`) for all devices. Camera images additionally encode trigger event and burst position (`EVENTNO_POS`) so photos from the same trigger are grouped.
+- **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), and sequence total extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote.
+- **Device Identification**: Physical device IDs recorded per file. Camera serial numbers sourced from `cameras.csv`, AudioMoth device IDs parsed from CONFIG.TXT.
+- **Timestamps**: `recorded_datetime` stored as ISO 8601 with UTC offset (e.g. `2025-12-04T15:48:05-08:00`), sourced from EXIF for cameras and AudioMoth filename for audio; DST-aware via `zoneinfo`
+- **File Metadata CSV**: One row per file with standardized fields covering file, device, location, and timing information. See the Metadata CSV Fields section below for the full schema.
+- **Deployment Records**: Deployment configuration and file manifest saved as JSON for each session.
+- **Data Integrity**: SHA-256 checksum recorded for each file, enabling corruption detection if needed.
 - **Cloud Storage**: Automatic upload to Box with progress tracking and OAuth token refresh
-- **File Support**: Images (JPG, PNG, TIF, RAW), audio (WAV, MP3, FLAC)
-- **Comprehensive Logging**: CSV and JSON metadata files with deployment manifest
-- **Reserve-Specific Configuration**: Pre-configured for 40+ UCNRS reserves with plot-specific naming
-
-## Screenshots
-
-### Deployment Metadata Entry
-Enter deployment information, select devices, and configure storage location.
-
-![Deployment Metadata Entry](screenshots/01-metadata-entry.png)
-
-### SD Card Data Collection
-Copy files from SD cards with automatic renaming and metadata extraction.
-
-![SD Card Data Collection](screenshots/02-data-collection.png)
-
-### Review & Upload to Box
-View deployment summary and upload to Box cloud storage.
-
-![Review & Upload](screenshots/03-review-upload.png)
+- **Multi-Format File Support**: Images (JPG, PNG, TIF, RAW), audio (WAV, MP3, FLAC)
+- **Configurable Lookup Tables**: Site, plot, and camera metadata loaded from local CSV files, making the app adaptable to other CASSN partners.
+- **Wildlife Insights Export**: Generates a deployment CSV formatted for upload to Wildlife Insights, using camera and plot metadata from `cameras.csv` and `wi_config.json`.
+- **Session Persistence**: Interrupted downloads resume automatically. Previously copied files are skipped and sequence/event numbering continues correctly.
 
 ## Installation
 
@@ -62,7 +46,7 @@ cd cassn-field-data-manager
 
 ### Configure Box Credentials
 
-Credentials are stored in `~/.cassn_credentials/` — a hidden folder in your home directory, outside the repo so they are never accidentally committed to version control.
+Credentials to connect with your Box account are stored in `~/.cassn_credentials/`, a hidden folder in your home directory, outside the repo so they are never accidentally committed to version control.
 
 Create the folder and config file:
 
@@ -94,7 +78,7 @@ chmod 600 ~/.cassn_credentials/config.json
 1. Go to https://app.box.com/developers/console
 2. Create a new app (Custom App → OAuth 2.0)
 3. Copy the Client ID and Client Secret
-4. Find your target folder ID from the Box web interface URL
+4. Navigate to the Box folder where you want data uploaded and copy the ID from the URL (e.g. `https://app.box.com/folder/123456789` → folder ID is `123456789`)
 
 ## Usage
 
@@ -112,7 +96,7 @@ Follow the prompts to:
 - Grant access to the application
 - Paste the full redirect URL back into the terminal
 
-This creates or refreshes `~/.cassn_credentials/box_tokens.json`, which enables automatic cloud uploads. No manual copy step is required. For detailed Box utility documentation, see [`utils/README.md`](utils/README.md). Box tokens expire after ~60 days — re-run the command above to refresh them.
+This creates or refreshes `~/.cassn_credentials/box_tokens.json`, which enables automatic cloud uploads. No manual copy step is required. For detailed Box utility documentation, see [`utils/README.md`](utils/README.md). Box tokens expire after ~60 days of inactivity. Re-run the command above to refresh them.
 
 ### 2. Run the Application
 
@@ -134,12 +118,7 @@ python cassn_field_data_manager.py
 #### Step 2: Collect SD Card Data
 - Insert SD card for each device
 - Select the device from the list
-- Click "Select SD Card & Copy Files"
-- Files are automatically:
-  - Copied to local staging
-  - Renamed with standardized naming
-  - Processed for EXIF metadata
-  - Hashed for integrity verification
+- Click "Select SD Card & Copy Files" to copy, rename, and hash all files to local staging
 - Repeat for all devices
 
 #### Step 3: Review & Finalize
@@ -148,6 +127,23 @@ python cassn_field_data_manager.py
 - Files automatically upload to Box (if enabled)
 - Open staging folder to verify
 - Start new deployment or exit
+
+### Screenshots
+
+#### Deployment Metadata Entry
+Enter deployment information, select devices, and configure storage location.
+
+![Deployment Metadata Entry](screenshots/01-metadata-entry.png)
+
+#### SD Card Data Collection
+Copy files from SD cards with automatic renaming and metadata extraction.
+
+![SD Card Data Collection](screenshots/02-data-collection.png)
+
+#### Review & Upload to Box
+View deployment summary and upload to Box cloud storage.
+
+![Review & Upload](screenshots/03-review-upload.png)
 
 ## Output Structure
 
@@ -158,6 +154,9 @@ ORG_SITE_YYYYMMDD/
 ├── deployment_metadata.json    # Deployment configuration
 ├── manifest.json               # File count and device summary
 ├── file_metadata.csv           # Detailed file metadata
+├── WI_metadata/                # Wildlife Insights deployment CSVs
+│   ├── wildlife_insights_ML_deployments.csv
+│   └── wildlife_insights_SA_deployments.csv
 └── raw_data/
     ├── p1_ML/                  # Plot 1, Medium-Large camera
     │   ├── UC_Bodega_plot1_ML_202601_00001_1.jpg   # Trigger event 1, photo 1
@@ -170,6 +169,10 @@ ORG_SITE_YYYYMMDD/
     │   └── ...
     └── ...
 ```
+
+### Wildlife Insights Deployment CSV
+
+At the end of each session, the app automatically generates deployment CSVs formatted for upload to Wildlife Insights, saved to `WI_metadata/` within the deployment folder. One CSV is produced per device type (ML, SA). Requires `cameras.csv` and `wi_config.json` to be populated in `local_data/`.
 
 ### Metadata CSV Fields
 
@@ -195,7 +198,6 @@ The `file_metadata.csv` includes one row per file with the following columns:
 | `sequence_event_num` | Trigger event number — groups all photos from the same trigger | Cameras only |
 | `sequence_position` | Photo's position within the sequence (1, 2, 3) | Cameras only |
 | `sequence_total` | Total photos per trigger sequence | Cameras only |
-| `source_path` | Original full path on SD card | All |
 
 ## Device Types
 
@@ -205,25 +207,6 @@ The `file_metadata.csv` includes one row per file with the following columns:
 - **BT**: Acoustic Recorder (Bats)
 
 ## Configuration
-
-### Persistent Settings
-
-The application saves your preferred staging location and Box credentials in:
-
-```
-~/.cassn_credentials/config.json
-~/.cassn_credentials/box_tokens.json
-```
-
-This folder is outside the git repo and never committed to version control.
-
-### Box Configuration
-
-Box credentials and folder IDs are stored in `~/.cassn_credentials/config.json`:
-- `client_id`: Your Box application Client ID
-- `client_secret`: Your Box application Client Secret
-- `target_folder_id`: The Box folder ID where data will be uploaded
-- Tokens are automatically stored in: `~/.cassn_credentials/box_tokens.json`
 
 ### Lookup Tables
 
@@ -256,12 +239,12 @@ cp example_data/cameras.csv local_data/cameras.csv
 cp example_data/wi_config.json local_data/wi_config.json
 ```
 
-**`cameras.csv`** — camera serial numbers and Wildlife Insights metadata per plot. The
+**`cameras.csv`**: Camera serial numbers and Wildlife Insights metadata per plot. The
 `generate_wi_deployments.py` utility will auto-generate a skeleton from `plots.csv` if
 this file does not exist. Fill in `camera_id` (physical serial number) and `feature_type`
 (e.g. `Road dirt`, `Trail game`) for each camera.
 
-**`wi_config.json`** — Wildlife Insights project IDs and upload defaults. Edit
+**`wi_config.json`**: Wildlife Insights project IDs and upload defaults. Edit
 `project_id_ML` and `project_id_SA` to match your project IDs in Wildlife Insights.
 
 Then edit the files in `local_data/`. Changes take effect on next app launch.
