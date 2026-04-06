@@ -5,6 +5,7 @@ import csv
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import shutil
 import json
 import hashlib
@@ -193,23 +194,86 @@ def classify_file(filename):
 
 
 def extract_exif_data(image_path):
-    """Extract EXIF data from image file"""
+    """Extract EXIF data from image file. Returns name-mapped dict and raw exif dict."""
     if not EXIF_AVAILABLE:
-        return {}
-    
+        return {}, {}
+
     try:
         img = Image.open(image_path)
-        exif_data = {}
-        
-        if hasattr(img, '_getexif') and img._getexif():
-            exif = img._getexif()
-            for tag_id, value in exif.items():
-                tag = TAGS.get(tag_id, tag_id)
-                exif_data[tag] = value
-        
-        return exif_data
-    except Exception as e:
-        return {"error": str(e)}
+        raw_exif = img._getexif() or {}
+        exif_data = {TAGS.get(tag_id, tag_id): value for tag_id, value in raw_exif.items()}
+        return exif_data, raw_exif
+    except Exception:
+        return {}, {}
+
+
+def extract_reconyx_sequence(raw_exif):
+    """
+    Returns (trigger_type, position, total) from Reconyx HP4K MakerNote.
+    e.g. ('M', 1, 3) or (None, None, None) if unavailable.
+    Offsets verified against HYPERFIRE HP4K MakerNote binary structure.
+    """
+    try:
+        mn = raw_exif.get(0x927c)
+        if mn and len(mn) > 42:
+            trigger = chr(mn[40])
+            pos = mn[41]
+            total = mn[42]
+            if trigger in ('M', 'T', 'L') and 1 <= pos <= total:
+                return trigger, pos, total
+    except Exception:
+        pass
+    return None, None, None
+
+
+_PACIFIC = ZoneInfo('America/Los_Angeles')
+
+
+def parse_camera_recorded_datetime(exif_data):
+    """
+    Returns ISO 8601 datetime with UTC offset from Reconyx EXIF.
+    e.g. '2025-12-04T15:48:05-08:00'
+    """
+    try:
+        dt_str = exif_data.get('DateTimeOriginal') or exif_data.get('DateTime')
+        offset_str = exif_data.get('OffsetTimeOriginal', '')
+        if dt_str:
+            dt = datetime.strptime(f'{dt_str}{offset_str}', '%Y:%m:%d %H:%M:%S%z')
+            return dt.astimezone(_PACIFIC).isoformat()
+    except Exception:
+        pass
+    return ''
+
+
+def parse_audiomoth_recorded_datetime(original_filename):
+    """
+    Returns ISO 8601 datetime with UTC offset from AudioMoth filename.
+    AudioMoth filenames encode local Pacific time: '20251219_000000.WAV' -> '2025-12-19T00:00:00-08:00'
+    """
+    try:
+        stem = Path(original_filename).stem
+        dt_naive = datetime.strptime(stem, '%Y%m%d_%H%M%S')
+        return dt_naive.replace(tzinfo=_PACIFIC).isoformat()
+    except ValueError:
+        return ''
+
+
+def parse_audiomoth_device_id(source_dir):
+    """
+    Scans source_dir for an AudioMoth CONFIG.TXT and extracts the Device ID.
+    Returns the ID string (e.g. '24F31904648873F9') or '' if not found.
+    """
+    for candidate in Path(source_dir).rglob('*.TXT'):
+        try:
+            text = candidate.read_text(encoding='utf-8', errors='ignore')
+            for line in text.splitlines():
+                if line.strip().startswith('Device ID'):
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        return parts[1].strip()
+        except Exception:
+            continue
+    return ''
 
 
 def compute_file_hash(filepath):
@@ -1187,6 +1251,29 @@ class FieldDataWizard(QMainWindow):
             if entry['device_label'] == device_label and entry['file_type'] != 'config'
         )
         file_sequence = prior_media_count + 1
+
+        # Event counter for sequence-aware camera naming (increments per trigger, not per photo)
+        prior_event_nums = [
+            entry['sequence_event_num'] for entry in self.file_inventory
+            if entry['device_label'] == device_label
+            and entry.get('sequence_event_num') not in (None, '')
+        ]
+        event_sequence = (max(prior_event_nums) + 1) if prior_event_nums else 1
+        current_event_num = None
+
+        # Resolve physical device identifier
+        audio_device_types = {'BD', 'BT'}
+        if dev_code in audio_device_types:
+            device_id = parse_audiomoth_device_id(source_dir)
+            if not device_id:
+                self.log(f"  Warning: could not find AudioMoth Device ID in {source_dir}")
+        else:
+            cam_key = (site, int(plot_num) if str(plot_num).isdigit() else plot_num, dev_code)
+            cam_meta = self.wi_camera_metadata.get(cam_key, {})
+            device_id = cam_meta.get('camera_id', '')
+            if not device_id:
+                self.log(f"  Warning: camera_id missing for {site} plot {plot_num} {dev_code} — update cameras.csv")
+
         if already_copied:
             self.log(f"  {len(already_copied)} files already copied for {device_label}, resuming...")
 
@@ -1218,12 +1305,28 @@ class FieldDataWizard(QMainWindow):
                 if filename in already_copied:
                     continue
 
+                # For images: read EXIF and sequence from source before naming
+                exif_data = {}
+                trigger_type, seq_pos, seq_total = None, None, None
+                if file_type == "image" and EXIF_AVAILABLE:
+                    exif_data, raw_exif = extract_exif_data(source_path)
+                    trigger_type, seq_pos, seq_total = extract_reconyx_sequence(raw_exif)
+
                 if file_type == "config":
                     # Rename: ORG_SITE_DEVCODE_YYYYMMDD_CONFIG_01.txt
                     new_filename = f"{org}_{site}_{dev_code}_{start_date_str}_CONFIG_01{file_ext}"
                     dest_path = dest_dir / new_filename
+                elif file_type == "image" and seq_pos is not None:
+                    # Sequence-aware naming: {EVENTNO:05d}_{POS}
+                    if seq_pos == 1:
+                        current_event_num = event_sequence
+                        event_sequence += 1
+                    seq_str = f"{current_event_num:05d}_{seq_pos}"
+                    new_filename = f"{org}_{site}_plot{plot_num}_{dev_code}_{date_str}_{seq_str}{file_ext}"
+                    dest_path = dest_dir / new_filename
+                    file_sequence += 1
                 else:
-                    # Media files: standard rename convention
+                    # Audio or image without sequence data: standard sequential naming
                     seq_str = f"{file_sequence:05d}"
                     new_filename = f"{org}_{site}_plot{plot_num}_{dev_code}_{date_str}_{seq_str}{file_ext}"
                     dest_path = dest_dir / new_filename
@@ -1237,12 +1340,15 @@ class FieldDataWizard(QMainWindow):
                         self.log(f"  Warning: could not remove partial file {dest_path.name}: {e}")
 
                 shutil.copy2(source_path, dest_path)
-
-                exif_data = {}
-                if file_type == "image" and EXIF_AVAILABLE:
-                    exif_data = extract_exif_data(dest_path)
-
                 file_hash = compute_file_hash(dest_path)
+
+                # Recorded datetime: authoritative time from device
+                if file_type == "image":
+                    recorded_datetime = parse_camera_recorded_datetime(exif_data)
+                elif file_type == "audio":
+                    recorded_datetime = parse_audiomoth_recorded_datetime(filename)
+                else:
+                    recorded_datetime = ''
 
                 file_info = {
                     'original_filename': filename,
@@ -1250,17 +1356,20 @@ class FieldDataWizard(QMainWindow):
                     'plot_number': plot_num,
                     'plot_label': plot_label,
                     'device_type': dev_code,
-                    'device_label': device_label,
+                    'device_id': device_id,
                     'file_type': file_type,
                     'file_size_bytes': dest_path.stat().st_size,
                     'file_hash_sha256': file_hash,
-                    'source_path': str(source_path),
-                    'timestamp': datetime.fromtimestamp(dest_path.stat().st_mtime).isoformat(),
+                    'recorded_datetime': recorded_datetime,
                     'latitude': plot_metadata.get('plot_latitude') or '',
                     'longitude': plot_metadata.get('plot_longitude') or '',
-                    'exif_datetime': exif_data.get('DateTime'),
-                    'exif_make': exif_data.get('Make'),
-                    'exif_model': exif_data.get('Model'),
+                    'camera_make': exif_data.get('Make', ''),
+                    'camera_model': exif_data.get('Model', ''),
+                    'sequence_trigger_type': trigger_type or '',
+                    'sequence_event_num': current_event_num if seq_pos is not None else '',
+                    'sequence_position': seq_pos if seq_pos is not None else '',
+                    'sequence_total': seq_total if seq_total is not None else '',
+                    'source_path': str(source_path),
                 }
 
                 self.file_inventory.append(file_info)
