@@ -249,9 +249,10 @@ def parse_audiomoth_recorded_datetime(original_filename):
     """
     Returns ISO 8601 datetime with UTC offset from AudioMoth filename.
     AudioMoth filenames encode local Pacific time: '20251219_000000.WAV' -> '2025-12-19T00:00:00-08:00'
+    Triggered recordings append a suffix letter e.g. '20260108_000000T.WAV' — stripped before parsing.
     """
     try:
-        stem = Path(original_filename).stem
+        stem = Path(original_filename).stem.rstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
         dt_naive = datetime.strptime(stem, '%Y%m%d_%H%M%S')
         return dt_naive.replace(tzinfo=_PACIFIC).isoformat()
     except ValueError:
@@ -1261,19 +1262,6 @@ class FieldDataWizard(QMainWindow):
         event_sequence = (max(prior_event_nums) + 1) if prior_event_nums else 1
         current_event_num = None
 
-        # Resolve physical device identifier
-        audio_device_types = {'BD', 'BT'}
-        if dev_code in audio_device_types:
-            device_id = parse_audiomoth_device_id(source_dir)
-            if not device_id:
-                self.log(f"  Warning: could not find AudioMoth Device ID in {source_dir}")
-        else:
-            cam_key = (site, int(plot_num) if str(plot_num).isdigit() else plot_num, dev_code)
-            cam_meta = self.wi_camera_metadata.get(cam_key, {})
-            device_id = cam_meta.get('camera_id', '')
-            if not device_id:
-                self.log(f"  Warning: camera_id missing for {site} plot {plot_num} {dev_code} — update cameras.csv")
-
         if already_copied:
             self.log(f"  {len(already_copied)} files already copied for {device_label}, resuming...")
 
@@ -1288,6 +1276,19 @@ class FieldDataWizard(QMainWindow):
         org = self.metadata['organization']
         site = self.metadata['site']
         plot_metadata = PLOT_METADATA.get((site, plot_num), {})
+
+        # Resolve physical device identifier
+        audio_device_types = {'BD', 'BT'}
+        if dev_code in audio_device_types:
+            device_id = parse_audiomoth_device_id(source_dir)
+            if not device_id:
+                self.log(f"  Warning: could not find AudioMoth Device ID in {source_dir}")
+        else:
+            cam_key = (site, int(plot_num) if str(plot_num).isdigit() else plot_num, dev_code)
+            cam_meta = self.wi_camera_metadata.get(cam_key, {})
+            device_id = cam_meta.get('camera_id', '')
+            if not device_id:
+                self.log(f"  Warning: camera_id missing for {site} plot {plot_num} {dev_code} — update cameras.csv")
 
         for root, dirs, files in os.walk(source_dir):
             for filename in files:
@@ -1318,7 +1319,7 @@ class FieldDataWizard(QMainWindow):
                     dest_path = dest_dir / new_filename
                 elif file_type == "image" and seq_pos is not None:
                     # Sequence-aware naming: {EVENTNO:05d}_{POS}
-                    if seq_pos == 1:
+                    if seq_pos == 1 or current_event_num is None:
                         current_event_num = event_sequence
                         event_sequence += 1
                     seq_str = f"{current_event_num:05d}_{seq_pos}"
@@ -1356,6 +1357,7 @@ class FieldDataWizard(QMainWindow):
                     'plot_number': plot_num,
                     'plot_label': plot_label,
                     'device_type': dev_code,
+                    'device_label': device_label,
                     'device_id': device_id,
                     'file_type': file_type,
                     'file_size_bytes': dest_path.stat().st_size,
@@ -1430,13 +1432,14 @@ class FieldDataWizard(QMainWindow):
         
         csv_fields = [
             'new_filename', 'original_filename', 'plot_number', 'plot_label',
-            'device_type', 'device_label', 'file_type', 'file_size_bytes',
-            'file_hash_sha256', 'timestamp', 'latitude', 'longitude',
-            'exif_datetime', 'exif_make', 'exif_model', 'source_path'
+            'device_type', 'device_id', 'file_type', 'file_size_bytes',
+            'file_hash_sha256', 'recorded_datetime', 'latitude', 'longitude',
+            'camera_make', 'camera_model', 'sequence_trigger_type',
+            'sequence_event_num', 'sequence_position', 'sequence_total', 'source_path'
         ]
         
         with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fields)
+            writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction='ignore')
             writer.writeheader()
             writer.writerows(self.file_inventory)
         

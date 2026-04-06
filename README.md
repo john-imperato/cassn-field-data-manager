@@ -2,14 +2,18 @@
 
 A Python desktop application for streamlined wildlife monitoring data collection and management. Designed for the University of California Natural Reserve System (UCNRS) California Sentinel Sites for Nature (CASSN) team working with camera traps and acoustic recorders across California.
 
-![Version](https://img.shields.io/badge/version-2.1-blue)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![Version](https://img.shields.io/badge/version-2.2-blue)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
 - **Guided Workflow**: Step-by-step interface for multi-plot, multi-device data collection
-- **Automatic File Renaming**: Standardized naming convention: `ORG_SITE_plotN_DEVTYPE_YYYYMM_SEQNO.ext`
+- **Sequence-Aware File Naming**: Camera images named by trigger event and position — `ORG_SITE_plotN_DEVTYPE_YYYYMM_EVENTNO_POS.ext` — grouping all photos from the same trigger together and preventing double-counting in abundance estimates
+- **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), and sequence total extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote — no external tools required
+- **Device Identification**: Physical device IDs recorded per file — camera serial numbers from `cameras.csv`, AudioMoth device IDs parsed from CONFIG.TXT
+- **Authoritative Timestamps**: `recorded_datetime` stored as ISO 8601 with UTC offset (e.g. `2025-12-04T15:48:05-08:00`), sourced from EXIF for cameras and AudioMoth filename for audio; DST-aware via `zoneinfo`
+- **Session Persistence**: Interrupted downloads resume automatically — previously copied files are skipped and sequence/event numbering continues correctly
 - **Metadata Extraction**: Automatic EXIF data extraction from images
 - **Data Integrity**: SHA-256 file hashing for verification
 - **Cloud Storage**: Automatic upload to Box with progress tracking and OAuth token refresh
@@ -38,7 +42,7 @@ View deployment summary and upload to Box cloud storage.
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - pip package manager
 
 ### Install Dependencies
@@ -152,14 +156,16 @@ The application creates an organized folder structure in your staging location:
 ```
 ORG_SITE_YYYYMMDD/
 ├── deployment_metadata.json    # Deployment configuration
-├── manifest.json                # File count and device summary
-├── file_metadata.csv            # Detailed file metadata
+├── manifest.json               # File count and device summary
+├── file_metadata.csv           # Detailed file metadata
 └── raw_data/
-    ├── p1_ML/                   # Plot 1, Medium-Large camera
-    │   ├── UC_Bodega_plot1_ML_202601_00001.jpg
-    │   ├── UC_Bodega_plot1_ML_202601_00002.jpg
+    ├── p1_ML/                  # Plot 1, Medium-Large camera
+    │   ├── UC_Bodega_plot1_ML_202601_00001_1.jpg   # Trigger event 1, photo 1
+    │   ├── UC_Bodega_plot1_ML_202601_00001_2.jpg   # Trigger event 1, photo 2
+    │   ├── UC_Bodega_plot1_ML_202601_00001_3.jpg   # Trigger event 1, photo 3
+    │   ├── UC_Bodega_plot1_ML_202601_00002_1.jpg   # Trigger event 2, photo 1
     │   └── ...
-    ├── p1_BD/                   # Plot 1, Bird recorder
+    ├── p1_BD/                  # Plot 1, Bird recorder
     │   ├── UC_Bodega_plot1_BD_202601_00001.wav
     │   └── ...
     └── ...
@@ -167,15 +173,29 @@ ORG_SITE_YYYYMMDD/
 
 ### Metadata CSV Fields
 
-The `file_metadata.csv` includes:
-- Original and new filenames
-- Plot number and label
-- Device type and label
-- File type (image/audio)
-- File size and SHA-256 hash
-- Timestamp
-- EXIF data (DateTime, Make, Model)
-- Source path
+The `file_metadata.csv` includes one row per file with the following columns:
+
+| Field | Description | Devices |
+|---|---|---|
+| `new_filename` | Standardized filename assigned by the app | All |
+| `original_filename` | Original filename from SD card | All |
+| `plot_number` | Plot number | All |
+| `plot_label` | Plot name from plots.csv | All |
+| `device_type` | ML, SA, BD, or BT | All |
+| `device_id` | Camera serial number (from cameras.csv) or AudioMoth Device ID (from CONFIG.TXT) | All |
+| `file_type` | image, audio, or config | All |
+| `file_size_bytes` | File size in bytes | All |
+| `file_hash_sha256` | SHA-256 checksum for integrity verification | All |
+| `recorded_datetime` | ISO 8601 datetime with UTC offset (e.g. `2025-12-04T15:48:05-08:00`); from EXIF for cameras, AudioMoth filename for audio | All |
+| `latitude` | Plot latitude from plots.csv | All |
+| `longitude` | Plot longitude from plots.csv | All |
+| `camera_make` | Camera manufacturer from EXIF | Cameras only |
+| `camera_model` | Camera model from EXIF | Cameras only |
+| `sequence_trigger_type` | Trigger type from Reconyx MakerNote (`M`=Motion, `T`=Time-lapse) | Cameras only |
+| `sequence_event_num` | Trigger event number — groups all photos from the same trigger | Cameras only |
+| `sequence_position` | Photo's position within the sequence (1, 2, 3) | Cameras only |
+| `sequence_total` | Total photos per trigger sequence | Cameras only |
+| `source_path` | Original full path on SD card | All |
 
 ## Device Types
 
