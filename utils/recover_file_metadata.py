@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Recover `file_metadata.csv` and `manifest.json` for a single Box deployment.
+Recover `file_metadata.csv` and `deployment_event_record.json` for a single Box deployment.
 
 Workflow:
 1. Authenticate with Box using the same local credentials as the app.
 2. Download the entire deployment folder to the configured staging drive.
 3. Recompute file hashes and EXIF metadata from the downloaded files.
-4. Rebuild `file_metadata.csv`, `manifest.json`, and `recovery_report.json`.
+4. Rebuild `file_metadata.csv`, `deployment_event_record.json`, and `recovery_report.json`.
 
 Usage:
     python3 utils/recover_file_metadata.py <box_folder_id>
@@ -63,7 +63,7 @@ IMAGE_EXTENSIONS = {
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".wma", ".ogg"}
 CONFIG_EXTENSIONS = {".txt"}
 
-METADATA_FILENAMES = {"file_metadata.csv", "deployment_metadata.json", "manifest.json"}
+METADATA_FILENAMES = {"file_metadata.csv", "deployment_event_record.json"}
 
 FIELDNAMES = [
     "new_filename",
@@ -731,35 +731,24 @@ def main() -> int:
             )
             report["status"] = "failed"
 
-        deployment_metadata_path = local_deployment_root / "deployment_metadata.json"
-        manifest_path = local_deployment_root / "manifest.json"
-        deployment_metadata, deployment_metadata_error = load_json_file(deployment_metadata_path)
-        existing_manifest, manifest_error = load_json_file(manifest_path)
+        record_path = local_deployment_root / "deployment_event_record.json"
+        existing_record, record_error = load_json_file(record_path)
 
-        if deployment_metadata_error:
+        if record_error:
             report["problems"].append(
                 {
-                    "path": deployment_metadata_path.as_posix(),
+                    "path": record_path.as_posix(),
                     "reason": "metadata_load_failed",
-                    "detail": deployment_metadata_error,
+                    "detail": record_error,
                 }
             )
             report["status"] = "failed"
 
-        if manifest_error:
-            report["problems"].append(
-                {
-                    "path": manifest_path.as_posix(),
-                    "reason": "metadata_load_failed",
-                    "detail": manifest_error,
-                }
-            )
-            report["status"] = "failed"
-
+        deployment_metadata = (existing_record or {}).get("deployment_info")
         deployment_info = infer_deployment_info(
             deployment_folder_name, deployment_metadata, folder_info
         )
-        device_context = build_device_context(existing_manifest, deployment_info)
+        device_context = build_device_context(existing_record, deployment_info)
 
         rows = []
         non_metadata_files = [f for f in downloaded_files if f["name"] not in METADATA_FILENAMES]
@@ -783,7 +772,7 @@ def main() -> int:
         recovered_manifest = build_manifest(deployment_info, rows, existing_manifest)
 
         output_csv = local_deployment_root / "file_metadata.csv"
-        output_manifest = local_deployment_root / "manifest.json"
+        output_manifest = local_deployment_root / "deployment_event_record.json"
         output_report = local_deployment_root / "recovery_report.json"
 
         log(f"Writing {output_csv.name}")

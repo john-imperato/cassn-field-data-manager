@@ -3,7 +3,7 @@
 Generate Wildlife Insights deployment CSVs for Box deployments.
 
 For each deployment in Box:
-  1. Downloads deployment_metadata.json and manifest.json (small JSON files only)
+  1. Downloads deployment_event_record.json (small JSON file only)
   2. Generates wildlife_insights_ML_deployments.csv and/or wildlife_insights_SA_deployments.csv
   3. Uploads the generated CSVs back to the same Box deployment folder
 
@@ -419,7 +419,7 @@ def find_deployment_folders(client: BoxClient, root_folder_id: str) -> list[tupl
 
 
 def fetch_deployment_jsons(client: BoxClient, folder_id: str) -> tuple[dict | None, dict | None, set[str]]:
-    """Download deployment_metadata.json and manifest.json from a Box folder."""
+    """Download deployment_event_record.json from a Box folder."""
     items = list_folder_items(client, folder_id)
     file_map = {
         getattr(i, "name"): getattr(i, "id")
@@ -429,17 +429,13 @@ def fetch_deployment_jsons(client: BoxClient, folder_id: str) -> tuple[dict | No
 
     deployment_metadata, manifest = None, None
 
-    if "deployment_metadata.json" in file_map:
+    if "deployment_event_record.json" in file_map:
         try:
-            deployment_metadata = download_json(client, file_map["deployment_metadata.json"])
+            record = download_json(client, file_map["deployment_event_record.json"])
+            deployment_metadata = record.get("deployment_info")
+            manifest = record
         except Exception as e:
-            log(f"  Warning: could not read deployment_metadata.json: {e}")
-
-    if "manifest.json" in file_map:
-        try:
-            manifest = download_json(client, file_map["manifest.json"])
-        except Exception as e:
-            log(f"  Warning: could not read manifest.json: {e}")
+            log(f"  Warning: could not read deployment_event_record.json: {e}")
 
     return deployment_metadata, manifest, existing_names
 
@@ -478,19 +474,16 @@ def main() -> int:
             print(f"ERROR: Not a directory: {local_path}", file=sys.stderr)
             return 1
 
-        meta_path = local_path / "deployment_metadata.json"
+        meta_path = local_path / "deployment_event_record.json"
         if not meta_path.exists():
-            print(f"ERROR: deployment_metadata.json not found in {local_path}", file=sys.stderr)
+            print(f"ERROR: deployment_event_record.json not found in {local_path}", file=sys.stderr)
             return 1
 
         with open(meta_path, "r", encoding="utf-8") as f:
-            deployment_metadata = json.load(f)
+            record = json.load(f)
 
-        manifest = None
-        manifest_path = local_path / "manifest.json"
-        if manifest_path.exists():
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest = json.load(f)
+        deployment_metadata = record.get("deployment_info")
+        manifest = record
 
         existing = {p.name for p in local_path.iterdir() if p.is_file()}
         log(f"Processing local: {local_path.name}")
@@ -523,7 +516,7 @@ def main() -> int:
         deployment_metadata, manifest, existing_names = fetch_deployment_jsons(client, folder_id)
 
         if not deployment_metadata:
-            log("  Skipping: deployment_metadata.json not found or unreadable")
+            log("  Skipping: deployment_event_record.json not found or unreadable")
             continue
 
         written = process_deployment(

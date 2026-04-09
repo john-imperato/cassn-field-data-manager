@@ -1159,10 +1159,6 @@ class FieldDataWizard(QMainWindow):
         
         (self.current_deployment_folder / "raw_data").mkdir(exist_ok=True)
         
-        metadata_file = self.current_deployment_folder / "deployment_metadata.json"
-        with open(metadata_file, 'w') as f:
-            json.dump(self.metadata, f, indent=2)
-
         self.save_session()
 
     def populate_collection_list(self):
@@ -1461,11 +1457,11 @@ class FieldDataWizard(QMainWindow):
             'version': VERSION
         }
         
-        manifest_path = self.current_deployment_folder / "manifest.json"
+        manifest_path = self.current_deployment_folder / "deployment_event_record.json"
         with open(manifest_path, 'w') as f:
             json.dump(manifest, f, indent=2)
 
-        self.log(f"Generated: manifest.json")
+        self.log(f"Generated: deployment_event_record.json")
 
         self._wi_status_lines = self.generate_wi_deployments()
     
@@ -1684,8 +1680,7 @@ class FieldDataWizard(QMainWindow):
         summary.append(f"Local Staging: {self.current_deployment_folder}")
         summary.append("")
         summary.append("Files generated:")
-        summary.append("  - deployment_metadata.json")
-        summary.append("  - manifest.json")
+        summary.append("  - deployment_event_record.json")
         summary.append("  - file_metadata.csv")
         summary.append(f"  - raw_data/ ({total_files} files in device subfolders)")
         summary.append("")
