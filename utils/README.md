@@ -83,7 +83,7 @@ Recovers a deployment by downloading the full Box folder to the staging drive,
 then regenerating:
 
 - `file_metadata.csv`
-- `manifest.json`
+- `deployment_event_record.json`
 - `recovery_report.json`
 
 ### When to use
@@ -151,7 +151,7 @@ That recovery folder contains:
 
 - the downloaded Box deployment contents
 - `file_metadata.csv`
-- `manifest.json`
+- `deployment_event_record.json`
 - `recovery_report.json`
 
 If the deployment folder already exists locally, the script fails and does not overwrite it.
@@ -164,7 +164,7 @@ If the deployment folder already exists locally, the script fails and does not o
 - Uses Box modified time for the recovered `timestamp` field
 - Sets unrecoverable fields such as `original_filename` and `source_path` to `NA`
 - Writes recovered outputs locally only; it does not upload `file_metadata.csv`
-  or `manifest.json` back to Box
+  or `deployment_event_record.json` back to Box
 - Writes `recovery_report.json` even when the run completes with failures
 - Uses `local_data/plots.csv` for plot-label lookup; `example_data/` files are templates only
 
@@ -268,7 +268,7 @@ For each deployment event, the script creates or updates:
 ### Notes
 
 - Authenticates using `~/.cassn_credentials/box_tokens.json` — no separate authentication step needed
-- Only downloads `deployment_metadata.json` and `manifest.json` from Box; media files are never downloaded
+- Only downloads `deployment_event_record.json` from Box; media files are never downloaded
 - Audio device types (`BD`, `BT`) are ignored
 - Missing `wi_config.json` causes the script to fail before writing output
 - Missing `cameras.csv` causes warnings and blank camera-specific fields

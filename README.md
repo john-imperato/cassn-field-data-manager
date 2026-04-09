@@ -151,8 +151,7 @@ The application creates an organized folder structure in your staging location:
 
 ```
 ORG_SITE_YYYYMMDD/
-├── deployment_metadata.json    # Deployment configuration
-├── manifest.json               # File count and device summary
+├── deployment_event_record.json # Deployment event record (devices, file count, dates)
 ├── file_metadata.csv           # Detailed file metadata
 ├── WI_metadata/                # Wildlife Insights deployment CSVs
 │   ├── wildlife_insights_ML_deployments.csv
