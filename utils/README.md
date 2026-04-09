@@ -273,3 +273,21 @@ For each deployment event, the script creates or updates:
 - Missing `wi_config.json` causes the script to fail before writing output
 - Missing `cameras.csv` causes warnings and blank camera-specific fields
 - Existing WI CSVs are skipped unless you use `--force`
+
+---
+
+## `generate_occurrences.py`
+
+Joins pre-processing file metadata (`file_metadata.csv`) with post-processing Wildlife Insights results (`images.csv`) to produce a deployment event occurrence record CSV. Each row is an animal detection with a unique file identifier, timestamp, and spatial coordinates. Blanks, humans, vehicles, and unidentified results are excluded.
+
+### Run
+```bash
+python3 utils/generate_occurrences.py <file_metadata.csv> <images.csv> <output_dir>
+```
+
+### Output
+
+```text
+<output_dir>/
+└── UC_SITE_YYYYMMDD_occurrences.csv
+```
