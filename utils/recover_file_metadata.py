@@ -33,8 +33,8 @@ except ImportError as exc:
     ) from exc
 
 APP_VERSION = "2.1"
-TOKEN_FILE = Path.home() / ".cassn_credentials" / "box_tokens.json"
-CONFIG_FILE = Path.home() / ".cassn_credentials" / "config.json"
+TOKEN_FILE = Path.home() / ".cassn_config" / "box_tokens.json"
+CONFIG_FILE = Path.home() / ".cassn_config" / "config.json"
 RECOVERY_ROOT = Path("/Volumes/G-DRIVE ArmorATD/cassn-field-data-staging")
 LOCAL_DATA_DIR = Path(__file__).resolve().parent.parent / "local_data"
 

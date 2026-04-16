@@ -10,16 +10,17 @@ import shutil
 import json
 import hashlib
 
-# Credentials always live in ~/.cassn_credentials/ regardless of how the app is launched.
+# Credentials always live in ~/.cassn_config/ regardless of how the app is launched.
 # When frozen (bundled .app): assets live in sys._MEIPASS.
 # When running as a script: assets live next to the script.
-_CONFIG_DIR = Path.home() / ".cassn_credentials"
+_CONFIG_DIR = Path.home() / ".cassn_config"
 _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 if getattr(sys, 'frozen', False):
     _BUNDLE_DIR = Path(sys._MEIPASS)
 else:
     _BUNDLE_DIR = Path(__file__).parent
-_LOCAL_DATA_DIR = Path(__file__).parent / "local_data"
+_LOCAL_DATA_DIR = Path.home() / ".cassn_config" / "lookup_tables"
+_LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -68,14 +69,15 @@ def load_box_config():
     return (
         config['box']['client_id'],
         config['box']['client_secret'],
-        config['box']['target_folder_id']
+        config['box']['field_data_folder_id'],
+        config['box'].get('app_config_folder_id')
     )
 
 try:
-    BOX_CLIENT_ID, BOX_CLIENT_SECRET, BOX_TARGET_FOLDER_ID = load_box_config()
+    BOX_CLIENT_ID, BOX_CLIENT_SECRET, BOX_TARGET_FOLDER_ID, BOX_APP_CONFIG_FOLDER_ID = load_box_config()
 except FileNotFoundError as e:
     print(f"Warning: {e}")
-    BOX_CLIENT_ID = BOX_CLIENT_SECRET = BOX_TARGET_FOLDER_ID = None
+    BOX_CLIENT_ID = BOX_CLIENT_SECRET = BOX_TARGET_FOLDER_ID = BOX_APP_CONFIG_FOLDER_ID = None
 
 def _required_local_csv_path(filename):
     """Return the required repo-local CSV path."""
@@ -99,8 +101,9 @@ def load_reserves_from_csv():
             raise ValueError(f"No site rows found in {csv_path}")
     except Exception as e:
         print(
-            "Warning: Could not load site lookup data. "
-            f"Expected {csv_path}. Copy example_data/sites.csv to local_data/sites.csv and edit it. Error: {e}"
+            "Warning: Could not load site lookup data — "
+            "lookup tables will be synced from Box on startup. "
+            f"({e})"
         )
         reserves = []
 
@@ -144,8 +147,9 @@ def load_plot_names_from_csv():
                 continue
     except Exception as e:
         print(
-            "Warning: Could not load plot lookup data. "
-            f"Expected {csv_path}. Copy example_data/plots.csv to local_data/plots.csv and edit it. Error: {e}"
+            "Warning: Could not load plot lookup data — "
+            "lookup tables will be synced from Box on startup. "
+            f"({e})"
         )
         plot_names = {}
         plot_metadata = {}
@@ -466,7 +470,7 @@ class FieldDataWizard(QMainWindow):
         self.upload_thread = None
         
         # Load saved config
-        self.config_file = Path.home() / ".cassn_credentials" / "config.json"
+        self.config_file = Path.home() / ".cassn_config" / "config.json"
         self.load_config()
 
         # Load Wildlife Insights lookup tables
@@ -475,7 +479,10 @@ class FieldDataWizard(QMainWindow):
 
         # Check Box authentication
         self.box_authenticated = self.check_box_auth()
-        
+
+        # Sync lookup tables from Box app_config folder (falls back to cache if offline)
+        self.sync_lookup_tables()
+
         # Build UI
         self.init_ui()
 
@@ -504,6 +511,95 @@ class FieldDataWizard(QMainWindow):
         
         return False
     
+    def sync_lookup_tables(self):
+        """Download latest lookup tables from Box app_config folder.
+
+        On success: saves a sync timestamp and reloads all lookup data.
+        On failure: checks for cached files.
+          - If cache exists: warns user with last-synced date and asks to confirm.
+          - If no cache: hard blocks with an error and quits.
+        """
+        if not BOX_APP_CONFIG_FOLDER_ID:
+            return
+
+        timestamp_path = _LOCAL_DATA_DIR / ".last_synced"
+
+        try:
+            client = get_box_client()
+            if not client:
+                return
+
+            _LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            items = client.folders.get_folder_items(BOX_APP_CONFIG_FOLDER_ID)
+            synced = []
+
+            for item in items.entries:
+                if item.type != 'file':
+                    continue
+                local_path = _LOCAL_DATA_DIR / item.name
+                content = client.downloads.download_file(item.id)
+                with open(local_path, 'wb') as f:
+                    for chunk in content:
+                        f.write(chunk)
+                synced.append(item.name)
+
+            if synced:
+                # Save sync timestamp
+                timestamp_path.write_text(datetime.now().isoformat())
+                print(f"Synced lookup tables from Box: {', '.join(synced)}")
+
+            # Reload all lookup data with fresh files
+            global RESERVES, PLOT_NAMES, PLOT_METADATA
+            RESERVES = load_reserves_from_csv()
+            PLOT_NAMES, PLOT_METADATA = load_plot_names_from_csv()
+            self.wi_camera_metadata = self._load_wi_camera_metadata()
+            self.wi_config = self._load_wi_config()
+
+        except Exception as e:
+            print(f"Could not sync lookup tables from Box: {e}")
+            self._handle_sync_failure(timestamp_path)
+
+    def _handle_sync_failure(self, timestamp_path):
+        """Handle a failed sync — warn user or hard block depending on cache state."""
+        sites_cache = _LOCAL_DATA_DIR / "sites.csv"
+
+        # No cache at all — hard block
+        if not sites_cache.exists():
+            QMessageBox.critical(
+                self,
+                "Lookup Tables Missing",
+                "Could not connect to Box and no cached lookup tables were found.\n\n"
+                "An internet connection is required on first launch to download "
+                "the lookup tables needed to run the app.\n\n"
+                "Please connect to the internet and relaunch."
+            )
+            sys.exit(1)
+
+        # Cache exists — show last synced date and ask to confirm
+        if timestamp_path.exists():
+            try:
+                synced_at = datetime.fromisoformat(timestamp_path.read_text().strip())
+                date_str = synced_at.strftime("%B %d, %Y at %I:%M %p")
+                age_msg = f"Lookup tables were last synced on {date_str}."
+            except Exception:
+                age_msg = "Lookup table sync date is unknown."
+        else:
+            age_msg = "Lookup tables have never been synced from Box."
+
+        reply = QMessageBox.warning(
+            self,
+            "Could Not Sync Lookup Tables",
+            f"Could not connect to Box to sync the latest lookup tables.\n\n"
+            f"{age_msg}\n\n"
+            f"Proceeding with outdated tables could result in incorrect metadata.\n\n"
+            f"Proceed with cached lookup tables anyway?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.No:
+            sys.exit(0)
+
     def load_config(self):
         """Load saved configuration"""
         try:

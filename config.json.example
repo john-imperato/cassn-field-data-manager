@@ -2,6 +2,7 @@
   "box": {
     "client_id": "YOUR_BOX_CLIENT_ID_HERE",
     "client_secret": "YOUR_BOX_CLIENT_SECRET_HERE",
-    "target_folder_id": "YOUR_BOX_FOLDER_ID_HERE"
+    "field_data_folder_id": "YOUR_CASSN_FIELD_DATA_FOLDER_ID_HERE",
+    "app_config_folder_id": "YOUR_CASSN_APP_CONFIG_FOLDER_ID_HERE"
   }
 }

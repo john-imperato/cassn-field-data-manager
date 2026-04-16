@@ -6,7 +6,7 @@ from box_sdk_gen import BoxClient, BoxDeveloperTokenAuth
 from box_sdk_gen import BoxOAuth, OAuthConfig
 
 
-CONFIG_DIR = Path.home() / ".cassn_credentials"
+CONFIG_DIR = Path.home() / ".cassn_config"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Load credentials from config.json

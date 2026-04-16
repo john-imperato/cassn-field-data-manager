@@ -28,8 +28,8 @@ from pathlib import Path
 
 from box_sdk_gen import BoxClient, BoxOAuth, OAuthConfig
 
-TOKEN_FILE = Path.home() / ".cassn_credentials" / "box_tokens.json"
-CONFIG_FILE = Path.home() / ".cassn_credentials" / "config.json"
+TOKEN_FILE = Path.home() / ".cassn_config" / "box_tokens.json"
+CONFIG_FILE = Path.home() / ".cassn_config" / "config.json"
 LOCAL_DATA_DIR = Path(__file__).resolve().parent.parent / "local_data"
 
 CAMERA_DEVICE_TYPES = {"ML", "SA"}
