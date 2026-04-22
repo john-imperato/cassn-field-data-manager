@@ -2,7 +2,7 @@
 
 A Python desktop application for downloading, uploading, and managing wildlife image and audio data. Designed for the University of California Natural Reserve System (UCNRS) California Sentinel Sites for Nature (CASSN) team collecting standardized biodiversity data with camera traps and acoustic recorders across California.
 
-![Version](https://img.shields.io/badge/version-2.2-blue)
+![Version](https://img.shields.io/badge/version-3.0-blue)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -10,16 +10,19 @@ A Python desktop application for downloading, uploading, and managing wildlife i
 
 - **Guided Workflow**: Step-by-step interface for SD card download and cloud storage upload across multi-plot, multi-device deployments
 - **Standardized File Naming**: Files renamed to a consistent convention (`ORG_SITE_plotN_DEVTYPE_YYYYMMDD_SEQNO.ext`) for all devices. Camera images additionally encode trigger event and burst position (`EVENTNO_POS`) so photos from the same trigger are grouped.
-- **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), and sequence total extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote.
+- **Split Metadata CSVs**: Two CSVs written per deployment — `image_file_metadata.csv` (camera trap files) and `audio_file_metadata.csv` (AudioMoth recordings and config files). See the Metadata Schema section below for full field lists.
+- **AudioMoth Parsing**: Recording schedule, gain, filter cutoff, and sample rate extracted from CONFIG.TXT; per-file battery voltage, temperature, and gain parsed from WAV comment headers.
+- **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), sequence total, ambient temperature, moon phase, battery voltage, and battery type extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote via ExifTool.
 - **Device Identification**: Physical device IDs recorded per file. Camera serial numbers sourced from `cameras.csv`, AudioMoth device IDs parsed from CONFIG.TXT.
 - **Timestamps**: `recorded_datetime` stored as ISO 8601 with UTC offset (e.g. `2025-12-04T15:48:05-08:00`), sourced from EXIF for cameras and AudioMoth filename for audio; DST-aware via `zoneinfo`
-- **File Metadata CSV**: One row per file with standardized fields covering file, device, location, and timing information. See the Metadata CSV Fields section below for the full schema.
 - **Deployment Records**: Deployment configuration and file manifest saved as JSON for each session.
+- **Data Provenance**: Each metadata row records app version, processing timestamp, and Box upload status (uploader + datetime). Provenance CSVs are automatically re-uploaded to Box after the upload completes.
 - **Data Integrity**: SHA-256 checksum recorded for each file, enabling corruption detection if needed.
 - **Cloud Storage**: Automatic upload to Box with progress tracking and OAuth token refresh
 - **Multi-Format File Support**: Images (JPG, PNG, TIF, RAW), audio (WAV, MP3, FLAC)
 - **Configurable Lookup Tables**: Site, plot, and camera metadata loaded from local CSV files, making the app adaptable to other CASSN partners.
-- **Wildlife Insights Export**: Generates a deployment CSV formatted for upload to Wildlife Insights, using camera and plot metadata from `cameras.csv` and `wi_config.json`.
+- **Wildlife Insights Export**: Generates deployment CSVs formatted for upload to Wildlife Insights from `image_file_metadata.csv`, using camera metadata from `cameras.csv` and `wi_config.json`.
+- **SoundHub-Ready Audio Metadata**: `audio_file_metadata.csv` fields map directly to SoundHub deployment template columns — gain, filter cutoff (kHz), recording schedule, ARU hardware setup — so no field renaming is needed at submission time.
 - **Session Persistence**: Interrupted downloads resume automatically. Previously copied files are skipped and sequence/event numbering continues correctly.
 
 ## Installation
@@ -151,52 +154,90 @@ The application creates an organized folder structure in your staging location:
 
 ```
 ORG_SITE_YYYYMMDD/
-├── deployment_event_record.json # Deployment event record (devices, file count, dates)
-├── file_metadata.csv           # Detailed file metadata
-├── WI_metadata/                # Wildlife Insights deployment CSVs
+├── deployment_event_record.json        # Deployment event record (devices, file count, dates)
+├── image_file_metadata.csv             # Per-file metadata for all camera trap images
+├── audio_file_metadata.csv             # Per-file metadata for all AudioMoth recordings
+├── WI_metadata/                        # Wildlife Insights deployment CSVs
 │   ├── wildlife_insights_ML_deployments.csv
 │   └── wildlife_insights_SA_deployments.csv
 └── raw_data/
-    ├── p1_ML/                  # Plot 1, Medium-Large camera
-    │   ├── UC_Bodega_plot1_ML_202601_00001_1.jpg   # Trigger event 1, photo 1
-    │   ├── UC_Bodega_plot1_ML_202601_00001_2.jpg   # Trigger event 1, photo 2
-    │   ├── UC_Bodega_plot1_ML_202601_00001_3.jpg   # Trigger event 1, photo 3
-    │   ├── UC_Bodega_plot1_ML_202601_00002_1.jpg   # Trigger event 2, photo 1
+    ├── plot1_ML/                       # Plot 1, Medium-Large camera
+    │   ├── UC_Bodega_plot1_ML_20260303_00001_1.jpg   # Trigger event 1, photo 1
+    │   ├── UC_Bodega_plot1_ML_20260303_00001_2.jpg   # Trigger event 1, photo 2
+    │   ├── UC_Bodega_plot1_ML_20260303_00002_1.jpg   # Trigger event 2, photo 1
     │   └── ...
-    ├── p1_BD/                  # Plot 1, Bird recorder
-    │   ├── UC_Bodega_plot1_BD_202601_00001.wav
+    ├── plot1_BD/                       # Plot 1, Bird recorder
+    │   ├── UC_Bodega_plot1_BD_20260303_00001.wav
     │   └── ...
     └── ...
 ```
 
 ### Wildlife Insights Deployment CSV
 
-At the end of each session, the app automatically generates deployment CSVs formatted for upload to Wildlife Insights, saved to `WI_metadata/` within the deployment folder. One CSV is produced per device type (ML, SA). Requires `cameras.csv` and `wi_config.json` to be populated in `local_data/`.
+At the end of each session, the app automatically generates deployment CSVs formatted for upload to Wildlife Insights from `image_file_metadata.csv`, saved to `WI_metadata/` within the deployment folder. One CSV is produced per camera device type (ML, SA). Requires `cameras.csv` and `wi_config.json` to be populated in `local_data/`.
 
-### Metadata CSV Fields
+## Metadata Schema
 
-The `file_metadata.csv` includes one row per file with the following columns:
+### `image_file_metadata.csv`
 
-| Field | Description | Devices |
-|---|---|---|
-| `new_filename` | Standardized filename assigned by the app | All |
-| `original_filename` | Original filename from SD card | All |
-| `plot_number` | Plot number | All |
-| `plot_label` | Plot name from plots.csv | All |
-| `device_type` | ML, SA, BD, or BT | All |
-| `device_id` | Camera serial number (from cameras.csv) or AudioMoth Device ID (from CONFIG.TXT) | All |
-| `file_type` | image, audio, or config | All |
-| `file_size_bytes` | File size in bytes | All |
-| `file_hash_sha256` | SHA-256 checksum for integrity verification | All |
-| `recorded_datetime` | ISO 8601 datetime with UTC offset (e.g. `2025-12-04T15:48:05-08:00`); from EXIF for cameras, AudioMoth filename for audio | All |
-| `latitude` | Plot latitude from plots.csv | All |
-| `longitude` | Plot longitude from plots.csv | All |
-| `camera_make` | Camera manufacturer from EXIF | Cameras only |
-| `camera_model` | Camera model from EXIF | Cameras only |
-| `sequence_trigger_type` | Trigger type from Reconyx MakerNote (`M`=Motion, `T`=Time-lapse) | Cameras only |
-| `sequence_event_num` | Trigger event number — groups all photos from the same trigger | Cameras only |
-| `sequence_position` | Photo's position within the sequence (1, 2, 3) | Cameras only |
-| `sequence_total` | Total photos per trigger sequence | Cameras only |
+One row per camera trap file (images and associated files). Fields map directly to Wildlife Insights deployment and image columns.
+
+| Field | Description |
+|---|---|
+| `filename` | Standardized filename assigned by the app |
+| `original_filename` | Original filename from SD card |
+| `deployment_event_id` | Deployment event identifier (`ORG_SITE_YYYYMMDDend`) |
+| `deployment_id` | Per-device deployment ID (`ORG_SITE_plotN_DEVTYPE_YYYYMMDDend`) |
+| `organization`, `site`, `site_full_name`, `site_code` | Site identifiers |
+| `start_date`, `end_date` | Deployment start and end dates |
+| `recorded_by` | Observer who downloaded the data |
+| `subproject`, `subproject_design`, `placename`, `event_name`, `event_description` | WI deployment descriptors |
+| `plot_number`, `device_type`, `camera_id`, `file_type` | Per-device identity |
+| `file_size_bytes`, `file_hash_sha256` | File properties |
+| `recorded_datetime` | ISO 8601 datetime with UTC offset; sourced from EXIF |
+| `latitude`, `longitude` | Plot coordinates from `plots.csv` |
+| `camera_make`, `camera_model` | Camera manufacturer and model from EXIF |
+| `sequence_trigger_type`, `sequence_event_num`, `sequence_position`, `sequence_total` | Reconyx sequence data from MakerNote |
+| `temperature_c`, `moon_phase`, `battery_voltage`, `battery_voltage_avg`, `battery_type` | Reconyx MakerNote extras (via ExifTool) |
+| `project_id`, `bait_type`, `bait_description`, `event_type`, `quiet_period`, `camera_functioning` | Wildlife Insights fields from `wi_config.json` |
+| `feature_type`, `feature_type_methodology`, `sensor_height`, `height_other`, `sensor_orientation`, `orientation_other` | WI deployment setup from `cameras.csv` |
+| `plot_treatment`, `plot_treatment_description`, `detection_distance` | WI plot fields from `cameras.csv` |
+| `app_version`, `processing_datetime` | Processing provenance |
+| `is_uploaded_to_box`, `box_uploader`, `box_upload_datetime` | Box upload provenance |
+| `is_uploaded_to_pelican`, `pelican_uploader`, `pelican_upload_datetime` | Pelican transfer provenance |
+| `is_submitted_to_wi`, `wi_submitter`, `wi_submission_datetime` | WI submission provenance |
+| `notes` | Free text |
+
+### `audio_file_metadata.csv`
+
+One row per AudioMoth file (WAV recordings and CONFIG.TXT files). Fields map directly to SoundHub deployment template columns.
+
+| Field | Description |
+|---|---|
+| `filename`, `original_filename` | Standardized and original filenames |
+| `deployment_event_id`, `deployment_id` | Deployment identifiers |
+| `organization`, `site`, `site_full_name`, `site_code` | Site identifiers |
+| `deployment_start_date`, `deployment_end_date`, `recorded_by` | Deployment context |
+| `subproject`, `subproject_design`, `placename`, `event_name`, `event_description` | SoundHub deployment descriptors |
+| `plot_number`, `device_type`, `device_id`, `file_type` | Per-device identity |
+| `file_size_bytes`, `file_hash_sha256` | File properties |
+| `recorded_datetime` | ISO 8601 datetime with UTC offset; sourced from AudioMoth filename |
+| `latitude`, `longitude` | Plot coordinates from `plots.csv` |
+| `ARU_make`, `ARU_model` | Hardcoded `AudioMoth`; model from CONFIG.TXT firmware string |
+| `sample_rate_hz` | From WAV header or CONFIG.TXT |
+| `gain` | Recording gain from WAV comment or CONFIG.TXT |
+| `filter_type_khz` | High-pass filter cutoff in kHz (blank for BD) |
+| `battery_voltage`, `temperature_c` | From AudioMoth WAV comment |
+| `date_installed`, `deployment_start_time`, `deployment_end_time` | From CONFIG.TXT recording schedule |
+| `frequency`, `duration` | Recording schedule from CONFIG.TXT |
+| `filter_type_duration`, `filter_type_amplitude` | Trigger filter settings from CONFIG.TXT |
+| `feature_type`, `feature_type_details`, `ARU_container`, `ARU_microphone`, `mounted_on`, `sensor_height_meters`, `ARU_status` | SoundHub physical setup from `ARUs.csv` and `soundhub_config.json` |
+| `app_version`, `processing_datetime` | Processing provenance |
+| `is_uploaded_to_box`, `box_uploader`, `box_upload_datetime` | Box upload provenance |
+| `is_uploaded_to_pelican`, `pelican_uploader`, `pelican_upload_datetime` | Pelican transfer provenance |
+| `is_submitted_to_soundhub`, `soundhub_submitter`, `soundhub_submission_datetime` | SoundHub submission provenance |
+| `is_submitted_to_nabat`, `nabat_submitter`, `nabat_submission_datetime` | NABat submission provenance |
+| `notes` | Free text |
 
 ## Device Types
 
@@ -216,6 +257,8 @@ The application requires real site and plot CSVs in the repo-local ignored
 - `local_data/plots.csv`
 - `local_data/cameras.csv`
 - `local_data/wi_config.json`
+- `local_data/soundhub_config.json` — ARU hardware defaults (container type, microphone)
+- `local_data/ARUs.csv` — Per-deployment ARU physical setup (mount height, substrate)
 
 These files are not tracked by git and are intended for operational metadata,
 including any sensitive plot information you do not want in a public repository.
@@ -227,6 +270,8 @@ your local copies:
 - `example_data/plots.csv`
 - `example_data/cameras.csv`
 - `example_data/wi_config.json`
+- `example_data/soundhub_config.json`
+- `example_data/ARUs.csv`
 
 To create your private local copies:
 
@@ -236,15 +281,18 @@ cp example_data/sites.csv local_data/sites.csv
 cp example_data/plots.csv local_data/plots.csv
 cp example_data/cameras.csv local_data/cameras.csv
 cp example_data/wi_config.json local_data/wi_config.json
+cp example_data/soundhub_config.json local_data/soundhub_config.json
+cp example_data/ARUs.csv local_data/ARUs.csv
 ```
 
-**`cameras.csv`**: Camera serial numbers and Wildlife Insights metadata per plot. The
-`generate_wi_deployments.py` utility will auto-generate a skeleton from `plots.csv` if
-this file does not exist. Fill in `camera_id` (physical serial number) and `feature_type`
-(e.g. `Road dirt`, `Trail game`) for each camera.
+**`cameras.csv`**: Camera serial numbers and Wildlife Insights metadata per plot. Columns include `camera_id` (physical serial number), `feature_type` (e.g. `Road dirt`, `Trail game`), `sensor_height`, `sensor_orientation`, `plot_treatment`, `plot_treatment_description`, and `detection_distance`.
 
 **`wi_config.json`**: Wildlife Insights project IDs and upload defaults. Edit
 `project_id_ML` and `project_id_SA` to match your project IDs in Wildlife Insights.
+
+**`soundhub_config.json`**: Static ARU hardware defaults that apply to all deployments — `ARU_microphone`, `ARU_container_BD`, `ARU_container_BT`. Values are copied into `audio_file_metadata.csv` at processing time.
+
+**`ARUs.csv`**: One row per `(deployment_event_id, site_code, plot_number, device_type)` recording physical ARU setup — `mounted_on`, `sensor_height_meters`, `ARU_status`. Add a row for each new deployment before or after processing.
 
 Then edit the files in `local_data/`. Changes take effect on next app launch.
 
@@ -293,13 +341,18 @@ cassn-field-data-manager/
 ├── example_data/                     # Tracked templates and schema examples
 │   ├── sites.csv                     # Site/reserve lookup example
 │   ├── plots.csv                     # Plot lookup example
-│   ├── cameras.csv                   # Camera metadata example (serial numbers, feature types)
-│   └── wi_config.json                # Wildlife Insights config example
+│   ├── cameras.csv                   # Camera metadata example (serial numbers, WI fields)
+│   ├── wi_config.json                # Wildlife Insights config example
+│   ├── soundhub_config.json          # SoundHub ARU hardware config example
+│   └── ARUs.csv                      # ARU physical setup example
 ├── local_data/                       # Real operational CSVs and config (gitignored)
 ├── utils/
 │   ├── box_auth_setup.py             # Box OAuth authentication utility
+│   ├── generate_wi_deployments.py    # Wildlife Insights deployment CSV generator (reads image_file_metadata.csv)
+│   ├── generate_occurrences.py       # Wildlife Insights occurrences CSV generator
+│   ├── patch_metadata_v3.py          # One-time migration patch: v2 → v3 column renames
 │   ├── recover_file_metadata.py      # Metadata recovery utility
-│   └── generate_wi_deployments.py    # Wildlife Insights deployment CSV generator
+│   └── verify_v3_output.py           # Verification script for v3 deployment output
 ├── screenshots/                      # Application screenshots for README
 ├── .gitignore                        # Git ignore file
 └── README.md                         # This file

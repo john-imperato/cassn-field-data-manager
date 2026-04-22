@@ -3,6 +3,10 @@
 import sys
 import csv
 import os
+import re
+import struct
+import subprocess
+import wave
 from pathlib import Path
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -51,7 +55,7 @@ except ImportError:
     print("Warning: PIL/piexif not available. Install with: pip install pillow piexif")
 
 APP_TITLE = "CA-SSN Field Data Manager"
-VERSION = "2.1"
+VERSION = "3.0"
 
 # Load Box credentials from config.json
 def load_box_config():
@@ -281,6 +285,271 @@ def parse_audiomoth_device_id(source_dir):
     return ''
 
 
+def load_soundhub_config(path: Path) -> dict:
+    if not path.exists():
+        print(f"  WARNING: soundhub_config.json not found at {path}")
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_arus(path: Path) -> dict:
+    """Load ARUs.csv → dict keyed (deployment_event_id, site_code, plot_number_int, device_type)."""
+    result = {}
+    if not path.exists():
+        print(f"  WARNING: ARUs.csv not found at {path}")
+        return result
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                key = (
+                    row["deployment_event_id"].strip(),
+                    row["site_code"].strip(),
+                    int(row["plot_number"]),
+                    row["device_type"].strip(),
+                )
+                result[key] = {k: v.strip() for k, v in row.items()}
+            except (KeyError, ValueError):
+                continue
+    return result
+
+
+def parse_audiomoth_config_file(config_path: Path) -> dict:
+    """Parse a CONFIG.TXT file. Returns dict of AudioMoth settings."""
+    result = {}
+    if not config_path.exists():
+        return result
+    try:
+        lines = config_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        periods: list[tuple[str, str]] = []  # (start, end) per recording period
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, val = line.partition(":")
+            key = key.strip()
+            val = val.strip()
+
+            if key == "Firmware":
+                # "AudioMoth-Firmware-Basic (1.11.0)" → "AudioMoth-Firmware-Basic 1.11.0"
+                result["ARU_model"] = re.sub(r"\((.+?)\)", r"\1", val).strip()
+            elif key == "Sample rate (Hz)":
+                result["sample_rate_hz"] = val if val != "-" else ""
+            elif key == "Gain":
+                result["gain_setting"] = val if val != "-" else ""
+            elif key == "Filter":
+                if val == "-":
+                    result["low_pass_filter_hz"] = ""
+                    result["high_pass_filter_hz"] = ""
+                elif val.lower().startswith("high-pass"):
+                    m = re.search(r"([\d.]+)\s*khz", val, re.IGNORECASE)
+                    result["high_pass_filter_hz"] = str(int(float(m.group(1)) * 1000)) if m else ""
+                    result["low_pass_filter_hz"] = ""
+                elif val.lower().startswith("low-pass"):
+                    m = re.search(r"([\d.]+)\s*khz", val, re.IGNORECASE)
+                    result["low_pass_filter_hz"] = str(int(float(m.group(1)) * 1000)) if m else ""
+                    result["high_pass_filter_hz"] = ""
+                elif val.lower().startswith("bandpass"):
+                    # Bandpass: "Bandpass (10.0kHz - 50.0kHz)"
+                    nums = re.findall(r"([\d.]+)\s*khz", val, re.IGNORECASE)
+                    if len(nums) == 2:
+                        result["high_pass_filter_hz"] = str(int(float(nums[0]) * 1000))
+                        result["low_pass_filter_hz"] = str(int(float(nums[1]) * 1000))
+            elif key == "Threshold setting":
+                result["filter_type_amplitude"] = val.rstrip("%") if val != "-" else ""
+            elif key == "Minimum trigger duration (s)":
+                result["filter_type_duration"] = val if val != "-" else ""
+            elif re.match(r"Recording period \d+", key):
+                # "00:00 - 09:00 (UTC-8)" — collect all periods
+                m = re.match(r"(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})", val)
+                if m:
+                    periods.append((m.group(1), m.group(2)))
+                    result["frequency"] = "daily"
+
+        # Flatten all periods: first start, last end, total duration in HH:MM
+        if periods:
+            result["deployment_start_time"] = periods[0][0]
+            result["deployment_end_time"] = periods[-1][1]
+            total_minutes = 0
+            for start, end in periods:
+                try:
+                    t1 = datetime.strptime(start, "%H:%M")
+                    t2 = datetime.strptime(end, "%H:%M")
+                    delta_mins = int((t2 - t1).seconds / 60)
+                    if delta_mins < 0:
+                        delta_mins += 24 * 60
+                    total_minutes += delta_mins
+                except Exception:
+                    pass
+            h, m = divmod(total_minutes, 60)
+            result["duration"] = f"{h:02d}:{m:02d}"
+            # If multiple periods, record full schedule in notes-friendly format
+            if len(periods) > 1:
+                result["_schedule_note"] = ", ".join(f"{s}-{e}" for s, e in periods)
+
+    except Exception as e:
+        print(f"    WARNING: failed to parse CONFIG.TXT at {config_path}: {e}")
+    return result
+
+
+def parse_audiomoth_wav_comment(wav_path: Path) -> dict:
+    """Extract AudioMoth metadata from WAV ICMT comment chunk."""
+    result = {}
+    try:
+        with open(wav_path, "rb") as f:
+            data = f.read(4096)
+
+        # Find ICMT chunk
+        icmt_pos = data.find(b"ICMT")
+        if icmt_pos == -1:
+            # Fallback: scan for AudioMoth comment pattern
+            icmt_pos = data.find(b"Recorded at")
+        if icmt_pos == -1:
+            return result
+
+        # Read length (4 bytes after ICMT tag) then content
+        try:
+            if data[icmt_pos:icmt_pos+4] == b"ICMT":
+                length = struct.unpack_from("<I", data, icmt_pos + 4)[0]
+                comment = data[icmt_pos + 8: icmt_pos + 8 + length].decode("latin-1", errors="replace").rstrip("\x00")
+            else:
+                # Raw text
+                comment = data[icmt_pos:icmt_pos + 500].decode("latin-1", errors="replace")
+        except Exception:
+            return result
+
+        # Get sample rate from WAV header
+        try:
+            with wave.open(str(wav_path), "rb") as wf:
+                result["sample_rate_hz"] = str(wf.getframerate())
+        except Exception:
+            pass
+
+        # Parse comment string
+        m = re.search(r"at (\w[\w\s-]*?) gain", comment, re.IGNORECASE)
+        if m:
+            result["gain_setting"] = m.group(1).strip()
+
+        m = re.search(r"by AudioMoth ([0-9A-Fa-f]+)", comment)
+        if m:
+            result["device_id"] = m.group(1)
+
+        m = re.search(r"battery was (?:greater than )?([\d.]+)V", comment, re.IGNORECASE)
+        if m:
+            result["battery_voltage"] = m.group(1)
+
+        m = re.search(r"temperature was ([\d.]+)C", comment, re.IGNORECASE)
+        if m:
+            result["temperature_c"] = m.group(1)
+
+        m = re.search(r"High-pass filter with frequency of ([\d.]+)\s*kHz", comment, re.IGNORECASE)
+        if m:
+            result["high_pass_filter_hz"] = str(int(float(m.group(1)) * 1000))
+
+        m = re.search(r"Low-pass filter with frequency of ([\d.]+)\s*kHz", comment, re.IGNORECASE)
+        if m:
+            result["low_pass_filter_hz"] = str(int(float(m.group(1)) * 1000))
+
+        m = re.search(r"Amplitude threshold was (\d+)%", comment, re.IGNORECASE)
+        if m:
+            result["filter_type_amplitude"] = m.group(1)
+
+        m = re.search(r"(\d+)s minimum trigger duration", comment, re.IGNORECASE)
+        if m:
+            result["filter_type_duration"] = m.group(1)
+
+        result["ARU_make"] = "AudioMoth"
+
+    except Exception as e:
+        print(f"    WARNING: failed to parse WAV comment at {wav_path}: {e}")
+    return result
+
+
+def parse_reconyx_exiftool(image_path: Path) -> dict:
+    """Use ExifTool to extract Reconyx-specific fields."""
+    result = {}
+    try:
+        proc = subprocess.run(
+            ["exiftool", "-Reconyx:All", "-json", str(image_path)],
+            capture_output=True, text=True, timeout=15
+        )
+        if proc.returncode != 0:
+            return result
+        data = json.loads(proc.stdout)
+        if not data:
+            return result
+        tags = data[0]
+
+        # AmbientTemperature: "4 C" → "4"
+        temp = tags.get("AmbientTemperature", "")
+        m = re.match(r"([-\d.]+)", str(temp))
+        if m:
+            result["temperature_c"] = m.group(1)
+
+        result["moon_phase"] = tags.get("MoonPhase", "")
+        result["battery_voltage"] = str(tags.get("BatteryVoltage", ""))
+        result["battery_voltage_avg"] = str(tags.get("BatteryVoltageAvg", ""))
+        result["battery_type"] = tags.get("BatteryType", "")
+
+    except Exception as e:
+        print(f"    WARNING: ExifTool failed on {image_path}: {e}")
+    return result
+
+
+def _hz_to_khz(val) -> str:
+    """Convert Hz value to kHz string. Returns '' if blank."""
+    if not val:
+        return ''
+    try:
+        return str(round(float(val) / 1000, 4)).rstrip('0').rstrip('.')
+    except (ValueError, TypeError):
+        return str(val)
+
+
+IMAGE_FIELDS = [
+    'filename', 'original_filename', 'deployment_event_id', 'deployment_id',
+    'organization', 'site', 'site_full_name', 'site_code',
+    'start_date', 'end_date', 'recorded_by',
+    'subproject', 'subproject_design', 'placename', 'event_name', 'event_description',
+    'plot_number', 'device_type', 'camera_id', 'file_type',
+    'file_size_bytes', 'file_hash_sha256', 'recorded_datetime',
+    'latitude', 'longitude',
+    'camera_make', 'camera_model',
+    'sequence_trigger_type', 'sequence_event_num', 'sequence_position', 'sequence_total',
+    'temperature_c', 'moon_phase', 'battery_voltage', 'battery_voltage_avg', 'battery_type',
+    'project_id', 'bait_type', 'bait_description', 'event_type', 'quiet_period',
+    'camera_functioning', 'feature_type', 'feature_type_methodology',
+    'sensor_height', 'height_other', 'sensor_orientation', 'orientation_other',
+    'plot_treatment', 'plot_treatment_description', 'detection_distance',
+    'app_version', 'processing_datetime',
+    'is_uploaded_to_box', 'box_uploader', 'box_upload_datetime',
+    'is_uploaded_to_pelican', 'pelican_uploader', 'pelican_upload_datetime',
+    'is_submitted_to_wi', 'wi_submitter', 'wi_submission_datetime',
+    'notes',
+]
+
+AUDIO_FIELDS = [
+    'filename', 'original_filename', 'deployment_event_id', 'deployment_id',
+    'organization', 'site', 'site_full_name', 'site_code',
+    'deployment_start_date', 'deployment_end_date', 'recorded_by',
+    'subproject', 'subproject_design', 'placename', 'event_name', 'event_description',
+    'plot_number', 'device_type', 'device_id', 'file_type',
+    'file_size_bytes', 'file_hash_sha256', 'recorded_datetime',
+    'latitude', 'longitude',
+    'ARU_make', 'ARU_model', 'sample_rate_hz', 'gain', 'filter_type_khz',
+    'battery_voltage', 'temperature_c',
+    'date_installed', 'deployment_start_time', 'deployment_end_time',
+    'frequency', 'duration', 'filter_type_duration', 'filter_type_amplitude',
+    'feature_type', 'feature_type_details', 'ARU_container', 'ARU_microphone',
+    'mounted_on', 'sensor_height_meters', 'ARU_status',
+    'app_version', 'processing_datetime',
+    'is_uploaded_to_box', 'box_uploader', 'box_upload_datetime',
+    'is_uploaded_to_pelican', 'pelican_uploader', 'pelican_upload_datetime',
+    'is_submitted_to_soundhub', 'soundhub_submitter', 'soundhub_submission_datetime',
+    'is_submitted_to_nabat', 'nabat_submitter', 'nabat_submission_datetime',
+    'notes',
+]
+
+
 def compute_file_hash(filepath):
     """Compute SHA-256 hash of file"""
     sha256_hash = hashlib.sha256()
@@ -351,6 +620,11 @@ def get_box_client():
         return None
 
 
+# Initialized after function definitions so loaders are available
+SOUNDHUB_CONFIG = load_soundhub_config(_LOCAL_DATA_DIR / "soundhub_config.json")
+ARUS = load_arus(_LOCAL_DATA_DIR / "ARUs.csv")
+
+
 class BoxUploadThread(QThread):
     """Background thread for uploading files to Box"""
     progress = Signal(int, int, str)  # current, total, message
@@ -361,6 +635,7 @@ class BoxUploadThread(QThread):
         self.deployment_folder = deployment_folder
         self.metadata = metadata
         self.client = None
+        self.deploy_folder_id = None  # set during run(); used for provenance re-upload
     
     def run(self):
         """Upload deployment folder to Box"""
@@ -389,7 +664,8 @@ class BoxUploadThread(QThread):
             year_folder   = self.find_or_create_folder(self.client, TARGET_FOLDER_ID, year)
             site_folder   = self.find_or_create_folder(self.client, year_folder.id, reserve_name)
             deploy_folder = self.find_or_create_folder(self.client, site_folder.id, deploy_name)
-            
+            self.deploy_folder_id = deploy_folder.id  # saved for provenance re-upload
+
             uploadable_files = [
                 path for path in self.deployment_folder.rglob('*')
                 if path.is_file() and self.should_upload_file(path)
@@ -413,9 +689,10 @@ class BoxUploadThread(QThread):
 
     @staticmethod
     def should_upload_file(file_path):
-        """Skip macOS/Finder junk files from Box uploads."""
+        """Skip macOS/Finder junk files and internal app files from Box uploads."""
         name = file_path.name
-        return not (name.startswith('.') or name.startswith('._'))
+        SKIP_NAMES = {'session.json'}
+        return not (name.startswith('.') or name.startswith('._') or name in SKIP_NAMES)
     
     def find_or_create_folder(self, client, parent_id, folder_name):
         """Find existing folder or create new one"""
@@ -455,6 +732,47 @@ class BoxUploadThread(QThread):
             )
 
 
+class ProvenanceUploadThread(QThread):
+    """Re-uploads the two provenance-updated metadata CSVs to Box after upload completion."""
+    finished = Signal(bool, str)
+
+    def __init__(self, csv_paths, deploy_folder_id):
+        super().__init__()
+        self.csv_paths = csv_paths          # list of Path objects
+        self.deploy_folder_id = deploy_folder_id
+
+    def run(self):
+        try:
+            client = get_box_client()
+            if not client:
+                self.finished.emit(False, "Could not authenticate with Box for provenance upload")
+                return
+
+            for csv_path in self.csv_paths:
+                if not csv_path.exists():
+                    continue
+                # Check if file already exists in the folder; if so, upload new version
+                items = client.folders.get_folder_items(self.deploy_folder_id).entries
+                existing = next((item for item in items if item.type == 'file' and item.name == csv_path.name), None)
+                with open(csv_path, 'rb') as f:
+                    if existing:
+                        from box_sdk_gen import UploadFileVersionAttributes
+                        client.uploads.upload_file_version(
+                            existing.id,
+                            attributes=UploadFileVersionAttributes(name=csv_path.name),
+                            file=f,
+                        )
+                    else:
+                        client.uploads.upload_file(
+                            attributes={'name': csv_path.name, 'parent': {'id': self.deploy_folder_id}},
+                            file=f,
+                        )
+
+            self.finished.emit(True, "Provenance CSVs uploaded to Box")
+        except Exception as e:
+            self.finished.emit(False, f"Provenance upload error: {e}")
+
+
 class FieldDataWizard(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -468,6 +786,7 @@ class FieldDataWizard(QMainWindow):
         self.current_deployment_folder = None
         self.file_inventory = []
         self.upload_thread = None
+        self.provenance_thread = None
         
         # Load saved config
         self.config_file = Path.home() / ".cassn_config" / "config.json"
@@ -549,9 +868,11 @@ class FieldDataWizard(QMainWindow):
                 print(f"Synced lookup tables from Box: {', '.join(synced)}")
 
             # Reload all lookup data with fresh files
-            global RESERVES, PLOT_NAMES, PLOT_METADATA
+            global RESERVES, PLOT_NAMES, PLOT_METADATA, SOUNDHUB_CONFIG, ARUS
             RESERVES = load_reserves_from_csv()
             PLOT_NAMES, PLOT_METADATA = load_plot_names_from_csv()
+            SOUNDHUB_CONFIG = load_soundhub_config(_LOCAL_DATA_DIR / "soundhub_config.json")
+            ARUS = load_arus(_LOCAL_DATA_DIR / "ARUs.csv")
             self.wi_camera_metadata = self._load_wi_camera_metadata()
             self.wi_config = self._load_wi_config()
 
@@ -1382,6 +1703,16 @@ class FieldDataWizard(QMainWindow):
             if not device_id:
                 self.log(f"  Warning: camera_id missing for {site} plot {plot_num} {dev_code} — update cameras.csv")
 
+        # CONFIG.TXT — parse once per device folder (audio only; fast, critical for schedule fields)
+        config_data = {}
+        if dev_code in audio_device_types:
+            config_files = sorted(
+                f for pattern in ("*CONFIG*.txt", "*CONFIG*.TXT")
+                for f in Path(source_dir).glob(pattern)
+            )
+            if config_files:
+                config_data = parse_audiomoth_config_file(config_files[0])
+
         for root, dirs, files in os.walk(source_dir):
             for filename in files:
                 if filename.startswith('.') or filename.startswith('_'):
@@ -1443,6 +1774,19 @@ class FieldDataWizard(QMainWindow):
                 else:
                     recorded_datetime = ''
 
+                # Reconyx extras via ExifTool (best-effort)
+                reconyx_data = {}
+                if file_type == "image":
+                    reconyx_data = parse_reconyx_exiftool(source_path)
+
+                # AudioMoth WAV comment (per-file, overrides CONFIG.TXT where redundant)
+                wav_data = {}
+                if file_type == "audio":
+                    wav_data = parse_audiomoth_wav_comment(source_path)
+                    # WAV comment is authoritative for device_id if found
+                    if wav_data.get('device_id'):
+                        device_id = wav_data['device_id']
+
                 file_info = {
                     'original_filename': filename,
                     'new_filename': new_filename,
@@ -1464,15 +1808,38 @@ class FieldDataWizard(QMainWindow):
                     'sequence_position': seq_pos if seq_pos is not None else '',
                     'sequence_total': seq_total if seq_total is not None else '',
                     'source_path': str(source_path),
+                    # AudioMoth fields (audio rows only; blank for images)
+                    'ARU_make':    config_data.get('ARU_make', '') or wav_data.get('ARU_make', ''),
+                    'ARU_model':   config_data.get('ARU_model', '') or wav_data.get('ARU_model', ''),
+                    'sample_rate_hz': wav_data.get('sample_rate_hz', '') or config_data.get('sample_rate_hz', ''),
+                    'gain':        wav_data.get('gain_setting', '') or config_data.get('gain_setting', ''),
+                    'filter_type_khz': _hz_to_khz(wav_data.get('high_pass_filter_hz', '') or wav_data.get('low_pass_filter_hz', '') or config_data.get('high_pass_filter_hz', '') or config_data.get('low_pass_filter_hz', '')),
+                    'battery_voltage': wav_data.get('battery_voltage', ''),
+                    'temperature_c': wav_data.get('temperature_c', '') or reconyx_data.get('temperature_c', ''),
+                    'date_installed': self.metadata.get('deployment_start', ''),
+                    'deployment_start_time': config_data.get('deployment_start_time', '') or SOUNDHUB_CONFIG.get(f'deployment_start_time_{dev_code}', ''),
+                    'deployment_end_time':   config_data.get('deployment_end_time', '')   or SOUNDHUB_CONFIG.get(f'deployment_end_time_{dev_code}', ''),
+                    'frequency':   config_data.get('frequency', '') or SOUNDHUB_CONFIG.get('frequency', ''),
+                    'duration':    config_data.get('duration', '')   or SOUNDHUB_CONFIG.get(f'duration_{dev_code}', ''),
+                    'filter_type_duration':  wav_data.get('filter_type_duration', '')  or config_data.get('filter_type_duration', ''),
+                    'filter_type_amplitude': wav_data.get('filter_type_amplitude', '') or config_data.get('filter_type_amplitude', ''),
+                    # Reconyx extras (image rows only; blank for audio)
+                    'moon_phase':          reconyx_data.get('moon_phase', ''),
+                    'battery_voltage_avg': reconyx_data.get('battery_voltage_avg', ''),
+                    'battery_type':        reconyx_data.get('battery_type', ''),
                 }
 
                 self.file_inventory.append(file_info)
                 files_copied += 1
 
+                if file_type == "audio":
+                    size_mb = dest_path.stat().st_size / (1024 * 1024)
+                    self.log(f"  [{files_copied}] {new_filename}  ({size_mb:.1f} MB)")
+                elif files_copied % 50 == 0:
+                    self.log(f"  ...{files_copied} files processed")
+
                 if files_copied % 10 == 0:
                     self.save_session()
-                if files_copied % 50 == 0:
-                    self.log(f"  ...{files_copied} files processed")
 
         return files_copied
     
@@ -1519,45 +1886,201 @@ class FieldDataWizard(QMainWindow):
             self.upload_to_box()
     
     def generate_metadata_files(self):
-        """Generate CSV and JSON metadata files"""
-        csv_path = self.current_deployment_folder / "file_metadata.csv"
-        
-        csv_fields = [
-            'new_filename', 'original_filename', 'plot_number', 'plot_label',
-            'device_type', 'device_id', 'file_type', 'file_size_bytes',
-            'file_hash_sha256', 'recorded_datetime', 'latitude', 'longitude',
-            'camera_make', 'camera_model', 'sequence_trigger_type',
-            'sequence_event_num', 'sequence_position', 'sequence_total'
-        ]
-        
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction='ignore')
+        """Generate split metadata CSVs and deployment_event_record.json."""
+        org  = self.metadata.get('organization', '')
+        site = self.metadata.get('site', '')
+        start = self.metadata.get('deployment_start', '')
+        end   = self.metadata.get('deployment_end', '')
+        observer = self.metadata.get('observer', '')
+        end_nodash = end.replace('-', '')
+
+        # Site full name and code from RESERVES (list of (site_code, site_name))
+        site_full_name = ''
+        site_code = site  # fallback
+        for sc, sn in RESERVES:
+            if sc == site:
+                site_full_name = sn
+                break
+
+        deployment_event_id = f"{org}_{site}_{end_nodash}"
+        subproject = deployment_event_id
+
+        # event_name: "YYYYMMMstart-YYYYMMMend" e.g. "2026JAN-2026APR"
+        try:
+            s_dt = datetime.strptime(start, "%Y-%m-%d")
+            e_dt = datetime.strptime(end,   "%Y-%m-%d")
+            event_name = f"{s_dt.strftime('%Y%b').upper()}-{e_dt.strftime('%Y%b').upper()}"
+        except Exception:
+            event_name = ''
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        image_rows = []
+        audio_rows = []
+
+        for entry in self.file_inventory:
+            plot_num = entry.get('plot_number', '')
+            dev_type = entry.get('device_type', '')
+            file_type = entry.get('file_type', '')
+
+            try:
+                plot_num_int = int(plot_num)
+            except (TypeError, ValueError):
+                plot_num_int = None
+
+            deployment_id = f"{org}_{site}_plot{plot_num}_{dev_type}_{end_nodash}"
+            placename = f"{site}_plot{plot_num}"
+
+            # SoundHub physical lookup from ARUs.csv
+            aru_key = (deployment_event_id, site_code, plot_num_int, dev_type)
+            aru_row = ARUS.get(aru_key, {})
+
+            # SoundHub config lookup (keyed by device type suffix)
+            aru_container = SOUNDHUB_CONFIG.get(f'ARU_container_{dev_type}', '')
+            aru_microphone = SOUNDHUB_CONFIG.get('ARU_microphone', '')
+            sh_feature_type = SOUNDHUB_CONFIG.get('feature_type', '')
+
+            base = {
+                'filename':           entry.get('new_filename', ''),
+                'original_filename':  entry.get('original_filename', ''),
+                'deployment_event_id': deployment_event_id,
+                'deployment_id':      deployment_id,
+                'organization':       org,
+                'site':               site,
+                'site_full_name':     site_full_name,
+                'site_code':          site_code,
+                'subproject':         subproject,
+                'subproject_design':  '',
+                'placename':          placename,
+                'event_name':         event_name,
+                'event_description':  '',
+                'plot_number':        plot_num,
+                'device_type':        dev_type,
+                'file_type':          file_type,
+                'file_size_bytes':    entry.get('file_size_bytes', ''),
+                'file_hash_sha256':   entry.get('file_hash_sha256', ''),
+                'recorded_datetime':  entry.get('recorded_datetime', ''),
+                'latitude':           entry.get('latitude', ''),
+                'longitude':          entry.get('longitude', ''),
+                'app_version':        VERSION,
+                'processing_datetime': now_iso,
+                'is_uploaded_to_box': False,
+                'box_uploader':       '',
+                'box_upload_datetime': '',
+                'is_uploaded_to_pelican': False,
+                'pelican_uploader':   '',
+                'pelican_upload_datetime': '',
+                'notes':              '',
+            }
+
+            if file_type == 'image':
+                cam_key = (site, plot_num_int, dev_type) if plot_num_int else None
+                cam = self.wi_camera_metadata.get(cam_key, {}) if cam_key else {}
+                row = {**base,
+                    'start_date':    f"{start} 00:00:00" if start else '',
+                    'end_date':      f"{end} 23:59:59"   if end   else '',
+                    'recorded_by':   observer,
+                    'camera_id':     entry.get('device_id', ''),
+                    'camera_make':   entry.get('camera_make', ''),
+                    'camera_model':  entry.get('camera_model', ''),
+                    'sequence_trigger_type': entry.get('sequence_trigger_type', ''),
+                    'sequence_event_num':    entry.get('sequence_event_num', ''),
+                    'sequence_position':     entry.get('sequence_position', ''),
+                    'sequence_total':        entry.get('sequence_total', ''),
+                    'temperature_c':         entry.get('temperature_c', ''),
+                    'moon_phase':            entry.get('moon_phase', ''),
+                    'battery_voltage':       entry.get('battery_voltage', ''),
+                    'battery_voltage_avg':   entry.get('battery_voltage_avg', ''),
+                    'battery_type':          entry.get('battery_type', ''),
+                    # WI fields
+                    'project_id':            self.wi_config.get(f'project_id_{dev_type}', ''),
+                    'bait_type':             self.wi_config.get(f'bait_type_{dev_type}', ''),
+                    'bait_description':      self.wi_config.get(f'bait_description_{dev_type}', ''),
+                    'event_type':            self.wi_config.get('event_type', 'Temporal'),
+                    'quiet_period':          self.wi_config.get('quiet_period', 0),
+                    'camera_functioning':    self.wi_config.get('camera_functioning_default', 'Camera Functioning'),
+                    'feature_type':          cam.get('feature_type', ''),
+                    'feature_type_methodology': '',
+                    'sensor_height':         cam.get('sensor_height', ''),
+                    'height_other':          '',
+                    'sensor_orientation':    cam.get('sensor_orientation', ''),
+                    'orientation_other':     '',
+                    'plot_treatment':        cam.get('plot_treatment', ''),
+                    'plot_treatment_description': cam.get('plot_treatment_description', ''),
+                    'detection_distance':    cam.get('detection_distance', ''),
+                    'is_submitted_to_wi':    False,
+                    'wi_submitter':          '',
+                    'wi_submission_datetime': '',
+                }
+                image_rows.append(row)
+
+            else:  # audio or config
+                row = {**base,
+                    'deployment_start_date': start,
+                    'deployment_end_date':   end,
+                    'recorded_by':           observer,
+                    'device_id':             entry.get('device_id', ''),
+                    'ARU_make':              entry.get('ARU_make', '') or SOUNDHUB_CONFIG.get('ARU_make', ''),
+                    'ARU_model':             entry.get('ARU_model', '') or SOUNDHUB_CONFIG.get('ARU_model', ''),
+                    'sample_rate_hz':        entry.get('sample_rate_hz', '') or SOUNDHUB_CONFIG.get(f'sample_rate_hz_{dev_type}', ''),
+                    'gain':                  entry.get('gain', ''),
+                    'filter_type_khz':       entry.get('filter_type_khz', ''),
+                    'battery_voltage':       entry.get('battery_voltage', ''),
+                    'temperature_c':         entry.get('temperature_c', ''),
+                    'date_installed':        start,
+                    'deployment_start_time': entry.get('deployment_start_time', '') or SOUNDHUB_CONFIG.get(f'deployment_start_time_{dev_type}', ''),
+                    'deployment_end_time':   entry.get('deployment_end_time', '')   or SOUNDHUB_CONFIG.get(f'deployment_end_time_{dev_type}', ''),
+                    'frequency':             entry.get('frequency', '') or SOUNDHUB_CONFIG.get('frequency', ''),
+                    'duration':              entry.get('duration', '')   or SOUNDHUB_CONFIG.get(f'duration_{dev_type}', ''),
+                    'filter_type_duration':  entry.get('filter_type_duration', ''),
+                    'filter_type_amplitude': entry.get('filter_type_amplitude', ''),
+                    'feature_type':          sh_feature_type,
+                    'feature_type_details':  '',
+                    'ARU_container':         aru_container,
+                    'ARU_microphone':        aru_microphone,
+                    'mounted_on':            aru_row.get('mounted_on', ''),
+                    'sensor_height_meters':  aru_row.get('sensor_height_meters', ''),
+                    'ARU_status':            aru_row.get('ARU_status', ''),
+                    'is_submitted_to_soundhub': False,
+                    'soundhub_submitter':    '',
+                    'soundhub_submission_datetime': '',
+                    'is_submitted_to_nabat': False,
+                    'nabat_submitter':       '',
+                    'nabat_submission_datetime': '',
+                }
+                audio_rows.append(row)
+
+        # Write image_file_metadata.csv
+        img_path = self.current_deployment_folder / "image_file_metadata.csv"
+        with open(img_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=IMAGE_FIELDS, extrasaction='ignore')
             writer.writeheader()
-            writer.writerows(self.file_inventory)
-        
-        self.log(f"Generated: file_metadata.csv ({len(self.file_inventory)} files)")
-        
+            writer.writerows(image_rows)
+        self.log(f"Generated: image_file_metadata.csv ({len(image_rows)} rows)")
+
+        # Write audio_file_metadata.csv
+        aud_path = self.current_deployment_folder / "audio_file_metadata.csv"
+        with open(aud_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=AUDIO_FIELDS, extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(audio_rows)
+        self.log(f"Generated: audio_file_metadata.csv ({len(audio_rows)} rows)")
+
+        # deployment_event_record.json (unchanged)
         manifest = {
             'deployment_info': self.metadata,
             'devices': [
-                {
-                    'plot_number': pn,
-                    'plot_label': pl,
-                    'device_type': dc,
-                    'device_label': dl
-                }
+                {'plot_number': pn, 'plot_label': pl, 'device_type': dc, 'device_label': dl}
                 for pn, pl, dc, dl in self.devices
             ],
             'file_count': len(self.file_inventory),
             'generated': datetime.now().isoformat(),
             'version': VERSION
         }
-        
         manifest_path = self.current_deployment_folder / "deployment_event_record.json"
         with open(manifest_path, 'w') as f:
             json.dump(manifest, f, indent=2)
-
-        self.log(f"Generated: deployment_event_record.json")
+        self.log("Generated: deployment_event_record.json")
 
         self._wi_status_lines = self.generate_wi_deployments()
     
@@ -1619,10 +2142,7 @@ class FieldDataWizard(QMainWindow):
         return result
 
     def generate_wi_deployments(self) -> list[str]:
-        """Generate Wildlife Insights deployment CSVs into WI_metadata/ subfolder.
-
-        Returns a list of status strings for the review tab.
-        """
+        """Generate Wildlife Insights deployment CSVs from image_file_metadata.csv."""
         WI_COLUMNS = [
             "project_id", "deployment_id", "subproject_name", "subproject_design",
             "placename", "longitude", "latitude", "start_date", "end_date",
@@ -1633,82 +2153,65 @@ class FieldDataWizard(QMainWindow):
             "detection_distance",
         ]
         CAMERA_DEVICE_TYPES = {"ML", "SA"}
-
         status_lines = []
 
-        if not self.wi_config:
-            msg = "Skipping Wildlife Insights export: wi_config.json not found in local_data/"
+        img_path = self.current_deployment_folder / "image_file_metadata.csv"
+        if not img_path.exists():
+            msg = "Skipping WI export: image_file_metadata.csv not found"
             self.log(msg)
             status_lines.append(msg)
             return status_lines
 
-        plot_coords = self._load_wi_plot_coords()
-
-        site = self.metadata.get("site", "")
-        org = self.metadata.get("organization", "")
-        start = self.metadata.get("deployment_start", "")
-        end = self.metadata.get("deployment_end", "")
-        observer = self.metadata.get("observer", "")
-        subproject_name = f"{org}_{site}_{end.replace('-', '')}"
-
-        try:
-            from datetime import datetime as _dt
-            s = _dt.strptime(start, "%Y-%m-%d")
-            e = _dt.strptime(end, "%Y-%m-%d")
-            event_name = f"{s.strftime('%Y%b').upper()}-{e.strftime('%Y%b').upper()}"
-        except Exception:
-            event_name = ""
-
+        # Load image rows and deduplicate by deployment_id
+        seen = set()
         rows_by_type: dict[str, list[dict]] = {}
-
-        for plot_num, _plot_label, dev_type, _dev_label in self.devices:
-            if dev_type not in CAMERA_DEVICE_TYPES:
-                continue
-            try:
-                plot_num_int = int(plot_num)
-            except (TypeError, ValueError):
-                plot_num_int = None
-
-            cam = self.wi_camera_metadata.get((site, plot_num_int, dev_type), {}) if plot_num_int else {}
-            coords = plot_coords.get((site, plot_num_int), {}) if plot_num_int else {}
-
-            camera_id = cam.get("camera_id", "")
-            if not camera_id:
-                self.log(f"  WI Warning: camera_id missing for {site} plot {plot_num} {dev_type}")
-
-            row = {
-                "project_id": self.wi_config.get(f"project_id_{dev_type}", ""),
-                "deployment_id": f"{org}_{site}_plot{plot_num}_{dev_type}_{end.replace('-', '')}",
-                "subproject_name": subproject_name,
-                "subproject_design": "",
-                "placename": f"{site}_plot{plot_num}",
-                "longitude": coords.get("longitude", ""),
-                "latitude": coords.get("latitude", ""),
-                "start_date": f"{start} 00:00:00" if start else "",
-                "end_date": f"{end} 23:59:59" if end else "",
-                "event_name": event_name,
-                "event_description": "",
-                "event_type": self.wi_config.get("event_type", "Temporal"),
-                "bait_type": self.wi_config.get(f"bait_type_{dev_type}", ""),
-                "bait_description": self.wi_config.get(f"bait_description_{dev_type}", ""),
-                "feature_type": cam.get("feature_type", ""),
-                "feature_type_methodology": "",
-                "camera_id": camera_id,
-                "quiet_period": self.wi_config.get("quiet_period", 0),
-                "camera_functioning": self.wi_config.get("camera_functioning_default", "Camera Functioning"),
-                "sensor_height": cam.get("sensor_height", "Knee height"),
-                "height_other": "",
-                "sensor_orientation": cam.get(
-                    "sensor_orientation",
-                    "Parallel" if dev_type == "ML" else "Pointed Downward"
-                ),
-                "orientation_other": "",
-                "recorded_by": observer,
-                "plot_treatment": "",
-                "plot_treatment_description": "",
-                "detection_distance": "",
-            }
-            rows_by_type.setdefault(dev_type, []).append(row)
+        try:
+            with open(img_path, newline='', encoding='utf-8') as f:
+                for row in csv.DictReader(f):
+                    if row.get('file_type') != 'image':
+                        continue
+                    dev_type = row.get('device_type', '')
+                    if dev_type not in CAMERA_DEVICE_TYPES:
+                        continue
+                    dep_id = row.get('deployment_id', '')
+                    if dep_id in seen:
+                        continue
+                    seen.add(dep_id)
+                    wi_row = {
+                        "project_id":              row.get('project_id', ''),
+                        "deployment_id":           dep_id,
+                        "subproject_name":         row.get('subproject', ''),
+                        "subproject_design":       row.get('subproject_design', ''),
+                        "placename":               row.get('placename', ''),
+                        "longitude":               row.get('longitude', ''),
+                        "latitude":                row.get('latitude', ''),
+                        "start_date":              row.get('start_date', ''),
+                        "end_date":                row.get('end_date', ''),
+                        "event_name":              row.get('event_name', ''),
+                        "event_description":       row.get('event_description', ''),
+                        "event_type":              row.get('event_type', ''),
+                        "bait_type":               row.get('bait_type', ''),
+                        "bait_description":        row.get('bait_description', ''),
+                        "feature_type":            row.get('feature_type', ''),
+                        "feature_type_methodology": row.get('feature_type_methodology', ''),
+                        "camera_id":               row.get('camera_id', ''),
+                        "quiet_period":            row.get('quiet_period', ''),
+                        "camera_functioning":      row.get('camera_functioning', ''),
+                        "sensor_height":           row.get('sensor_height', ''),
+                        "height_other":            row.get('height_other', ''),
+                        "sensor_orientation":      row.get('sensor_orientation', ''),
+                        "orientation_other":       row.get('orientation_other', ''),
+                        "recorded_by":             row.get('recorded_by', ''),
+                        "plot_treatment":          row.get('plot_treatment', ''),
+                        "plot_treatment_description": row.get('plot_treatment_description', ''),
+                        "detection_distance":      row.get('detection_distance', ''),
+                    }
+                    rows_by_type.setdefault(dev_type, []).append(wi_row)
+        except Exception as e:
+            msg = f"Error reading image_file_metadata.csv for WI export: {e}"
+            self.log(msg)
+            status_lines.append(msg)
+            return status_lines
 
         wi_dir = self.current_deployment_folder / "WI_metadata"
         wi_dir.mkdir(exist_ok=True)
@@ -1854,11 +2357,60 @@ class FieldDataWizard(QMainWindow):
             self.upload_status_label.setText(f"✓ {message}")
             self.upload_status_label.setStyleSheet("color: green; font-weight: bold;")
             QMessageBox.information(self, "Upload Complete", message)
+            # Update provenance in both metadata CSVs
+            self._write_upload_provenance()
         else:
             self.upload_status_label.setText(f"✗ {message}")
             self.upload_status_label.setStyleSheet("color: red; font-weight: bold;")
             QMessageBox.warning(self, "Upload Failed", message)
+
+    def _write_upload_provenance(self):
+        """Set is_uploaded_to_box=True + uploader + timestamp in both metadata CSVs,
+        then re-upload the updated CSVs to Box."""
+        if not self.current_deployment_folder:
+            return
+        observer = self.metadata.get('observer', '')
+        upload_dt = datetime.now(timezone.utc).isoformat()
+        updated_paths = []
+
+        for csv_path, fields in [
+            (self.current_deployment_folder / "image_file_metadata.csv", IMAGE_FIELDS),
+            (self.current_deployment_folder / "audio_file_metadata.csv", AUDIO_FIELDS),
+        ]:
+            if not csv_path.exists():
+                continue
+            try:
+                with open(csv_path, newline='', encoding='utf-8') as f:
+                    rows = list(csv.DictReader(f))
+                for row in rows:
+                    row['is_uploaded_to_box'] = True
+                    row['box_uploader'] = observer
+                    row['box_upload_datetime'] = upload_dt
+                with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+                    writer.writeheader()
+                    writer.writerows(rows)
+                self.log(f"Updated provenance locally: {csv_path.name}")
+                updated_paths.append(csv_path)
+            except Exception as e:
+                self.log(f"Warning: could not update provenance in {csv_path.name}: {e}")
+
+        # Re-upload the provenance-stamped CSVs to the same Box folder
+        deploy_folder_id = self.upload_thread.deploy_folder_id if self.upload_thread else None
+        if updated_paths and deploy_folder_id:
+            self.provenance_thread = ProvenanceUploadThread(updated_paths, deploy_folder_id)
+            self.provenance_thread.finished.connect(self._on_provenance_upload_finished)
+            self.provenance_thread.start()
+        elif updated_paths:
+            self.log("Warning: deploy_folder_id not available — provenance CSVs updated locally only")
     
+    def _on_provenance_upload_finished(self, success, message):
+        """Handle completion of provenance CSV re-upload to Box."""
+        if success:
+            self.log(f"✓ {message}")
+        else:
+            self.log(f"Warning: {message}")
+
     def open_staging_folder(self):
         """Open staging folder in file explorer"""
         import subprocess
