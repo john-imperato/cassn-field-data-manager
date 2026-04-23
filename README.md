@@ -10,17 +10,17 @@ A Python desktop application for downloading, uploading, and managing wildlife i
 
 - **Guided Workflow**: Step-by-step interface for SD card download and cloud storage upload across multi-plot, multi-device deployments
 - **Standardized File Naming**: Files renamed to a consistent convention (`ORG_SITE_plotN_DEVTYPE_YYYYMMDD_SEQNO.ext`) for all devices. Camera images additionally encode trigger event and burst position (`EVENTNO_POS`) so photos from the same trigger are grouped.
-- **Split Metadata CSVs**: Two CSVs written per deployment — `image_file_metadata.csv` (camera trap files) and `audio_file_metadata.csv` (AudioMoth recordings and config files). See the Metadata Schema section below for full field lists.
+- **Per-file Metadata Generation**: Two CSVs written per deployment: `image_file_metadata.csv` (camera trap files) and `audio_file_metadata.csv` (AudioMoth recordings and config files). See the Metadata Schema section below for full field lists.
+- **Deployment Records**: Deployment configuration and file manifest saved as JSON for each session.
+- **Data Provenance**: Each metadata row records app version, processing timestamp, and Box upload status (uploader + datetime). Provenance CSVs are automatically re-uploaded to Box after the upload completes.
+- **Data Integrity**: SHA-256 checksum recorded for each file, enabling corruption detection if needed.
 - **AudioMoth Parsing**: Recording schedule, gain, filter cutoff, and sample rate extracted from CONFIG.TXT; per-file battery voltage, temperature, and gain parsed from WAV comment headers.
 - **Reconyx MakerNote Parsing**: Sequence position, trigger type (Motion/Time-lapse), sequence total, ambient temperature, moon phase, battery voltage, and battery type extracted directly from Reconyx HYPERFIRE HP4K EXIF MakerNote via ExifTool.
 - **Device Identification**: Physical device IDs recorded per file. Camera serial numbers sourced from `cameras.csv`, AudioMoth device IDs parsed from CONFIG.TXT.
 - **Timestamps**: `recorded_datetime` stored as ISO 8601 with UTC offset (e.g. `2025-12-04T15:48:05-08:00`), sourced from EXIF for cameras and AudioMoth filename for audio; DST-aware via `zoneinfo`
-- **Deployment Records**: Deployment configuration and file manifest saved as JSON for each session.
-- **Data Provenance**: Each metadata row records app version, processing timestamp, and Box upload status (uploader + datetime). Provenance CSVs are automatically re-uploaded to Box after the upload completes.
-- **Data Integrity**: SHA-256 checksum recorded for each file, enabling corruption detection if needed.
 - **Cloud Storage**: Automatic upload to Box with progress tracking and OAuth token refresh
 - **Multi-Format File Support**: Images (JPG, PNG, TIF, RAW), audio (WAV, MP3, FLAC)
-- **Configurable Lookup Tables**: Site, plot, and camera metadata loaded from local CSV files, making the app adaptable to other CASSN partners.
+- **Configurable Lookup Tables**: Site, plot, camera, and ARU metadata loaded from local CSV/json files.
 - **Wildlife Insights Export**: Generates deployment CSVs formatted for upload to Wildlife Insights from `image_file_metadata.csv`, using camera metadata from `cameras.csv` and `wi_config.json`.
 - **SoundHub-Ready Audio Metadata**: `audio_file_metadata.csv` fields map directly to SoundHub deployment template columns — gain, filter cutoff (kHz), recording schedule, ARU hardware setup — so no field renaming is needed at submission time.
 - **Session Persistence**: Interrupted downloads resume automatically. Previously copied files are skipped and sequence/event numbering continues correctly.
