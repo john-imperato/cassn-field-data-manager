@@ -83,6 +83,8 @@ except FileNotFoundError as e:
     print(f"Warning: {e}")
     BOX_CLIENT_ID = BOX_CLIENT_SECRET = BOX_TARGET_FOLDER_ID = BOX_APP_CONFIG_FOLDER_ID = None
 
+CHUNKED_UPLOAD_THRESHOLD = 20 * 1024 * 1024  # 20 MB — use chunked upload above this size
+
 def _required_local_csv_path(filename):
     """Return the required repo-local CSV path."""
     return _LOCAL_DATA_DIR / filename
@@ -636,6 +638,7 @@ class BoxUploadThread(QThread):
         self.metadata = metadata
         self.client = None
         self.deploy_folder_id = None  # set during run(); used for provenance re-upload
+        self._box_folder_files: dict[str, set[str]] = {}  # folder_id → set of existing filenames
     
     def run(self):
         """Upload deployment folder to Box"""
@@ -723,13 +726,41 @@ class BoxUploadThread(QThread):
                 )
                 current_folder_id = folder.id
         
-        # Upload the file
+        # Skip if already on Box — build a paginated cache per folder on first access
         file_name = relative_path.name
+        if current_folder_id not in self._box_folder_files:
+            existing = set()
+            offset = 0
+            while True:
+                page = self.client.folders.get_folder_items(
+                    current_folder_id, limit=1000, offset=offset
+                )
+                for item in page.entries:
+                    if item.type == 'file':
+                        existing.add(item.name)
+                if len(page.entries) < 1000:
+                    break
+                offset += 1000
+            self._box_folder_files[current_folder_id] = existing
+
+        if file_name in self._box_folder_files[current_folder_id]:
+            return
+
+        file_size = local_path.stat().st_size
         with open(local_path, 'rb') as file_stream:
-            self.client.uploads.upload_file(
-                attributes={'name': file_name, 'parent': {'id': current_folder_id}},
-                file=file_stream
-            )
+            if file_size >= CHUNKED_UPLOAD_THRESHOLD:
+                self.client.chunked_uploads.upload_big_file(
+                    file=file_stream,
+                    file_name=file_name,
+                    file_size=file_size,
+                    parent_folder_id=current_folder_id,
+                )
+            else:
+                self.client.uploads.upload_file(
+                    attributes={'name': file_name, 'parent': {'id': current_folder_id}},
+                    file=file_stream,
+                )
+        self._box_folder_files[current_folder_id].add(file_name)
 
 
 class ProvenanceUploadThread(QThread):
